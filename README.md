@@ -315,3 +315,7 @@ fetches the tag from this repository, so there is nothing to publish.
 A tag is never moved or deleted. Programs record a version's checksum in
 their `go.sum`, and a moved tag breaks their builds. A bad release gets a
 new patch release, and a `retract` line in `go.mod` if nobody should use it.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
