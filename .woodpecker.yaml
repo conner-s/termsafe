@@ -1,7 +1,12 @@
 # Woodpecker CI for termsafe, a Go module with no dependencies.
 #
-# Runs on pushes to main, on pull requests and when started by hand.
-# There is no publish step: Go fetches a tagged version from the repository.
+# Runs on pushes to main, on pull requests and when started by hand. This is
+# the gate a pull request has to pass. The jobs that need runners this forge
+# does not have, Windows and macOS, run after the merge, on the GitHub mirror:
+# .github/workflows/mirror.yml.
+#
+# There is no publish step: the forge pushes main to the mirror, and Go
+# fetches a tagged version from there.
 
 when:
   - event: push
@@ -25,7 +30,7 @@ steps:
       - GOOS=windows GOARCH=amd64 go vet ./...
       - test -z "$(gofmt -l .)" || (echo "Not formatted. Run 'gofmt -w .'" && gofmt -l . && exit 1)
       # Standard library only: the module graph is this module and nothing else.
-      - test "$(go list -m all)" = "forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+      - test "$(go list -m all)" = "github.com/conner-s/termsafe"
 
   test:
     image: golang:1.27-bookworm
@@ -39,11 +44,16 @@ steps:
       - go tool cover -func=/tmp/coverage.out | tail -1
       - go tool cover -func=/tmp/coverage.out | tail -1 | grep -q '100.0%'
 
-  # The same tests on the Go release of go.mod's go directive. Its Unicode
-  # tables are older (15.0, where 1.27 has 17.0), and what counts as a letter,
-  # a symbol or an ideograph comes from them. Programs built with that release
-  # get this behaviour. The image moves when the go directive moves, not
-  # before: renovate.json holds it.
+  # The same tests on Go 1.26, the release of go.mod's go directive. Its
+  # Unicode tables are older (15.0, where 1.27 has 17.0), and what counts as
+  # a letter, a symbol or an ideograph comes from them. Programs built with
+  # that release get this behaviour.
+  #
+  # Keep this step until Go 1.26 is no longer supported. Go supports a release
+  # until there are two newer ones (go.dev/doc/devel/release, "Release
+  # Policy"), so that is the day Go 1.28 is released. Then remove the step,
+  # remove the rule in renovate.json that holds this image, and raise the go
+  # directive.
   test-oldest-go:
     image: golang:1.26-bookworm
     commands:

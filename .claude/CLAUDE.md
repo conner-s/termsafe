@@ -2,6 +2,14 @@
 
 A Go package that makes text a program did not write safe to draw in a terminal. glip, Triate, glab, nfu, npk and vigil import it, so a change here reaches all of them. The package comment in `termsafe.go` is the specification. `README.md` states the guarantees and names the test that holds each.
 
+Where things happen:
+
+- Development is on the owner's Forgejo, `connerlab/termsafe`: issues, pull requests, the Woodpecker pipeline in `.woodpecker.yaml` that gates a pull request, and Renovate. A change goes through a pull request there.
+- The module path is `github.com/conner-s/termsafe`. The GitHub repository is a read-only mirror: the Forgejo pushes `main` to it. Nothing is committed, merged or reviewed on GitHub.
+- `.github/workflows/mirror.yml` runs on the mirror after each push: Windows, macOS, and Linux again. It runs after the merge, so its failure means `main` is already wrong. Fix that through a pull request on the Forgejo, and tag no release from a commit whose mirror run is not green.
+- A release is tagged on the Forgejo and must be on GitHub before Go can fetch it. Confirm the tag arrived (`git ls-remote --tags https://github.com/conner-s/termsafe`); do not assume the mirror carries tags.
+- The module was `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe` for v0.1.0 only. That path stands in the history notes of `README.md`, `PORTING.md` and `CHANGELOG.md` and nowhere else.
+
 ## Invariants
 
 Every change keeps these five.
@@ -12,7 +20,9 @@ Every change keeps these five.
 - Standard library only. `go.mod` has no `require`; CI checks that the module graph is this module alone.
 - Clean ASCII input allocates nothing, through `clean`, `Text.ASCII` and `Terminal.Fit`. `TestCleanInputAllocatesNothing` holds it there.
 
-Coverage of the package stays at 100% of statements. CI fails below that. `terminal_windows.go` is compiled only for Windows, where no test runs: keep it to the two calls it makes, and put every decision in `judge`, which is tested everywhere.
+Coverage of the package stays at 100% of statements. The pipeline fails below that, and so does the Linux job of the mirror's workflow. Code that only a real terminal reaches would break it, so `probe_unix.go` asks the system in straight lines and leaves every decision to `refusal` and `ask`, which scripted terminals reach on any platform.
+
+The Windows half runs nowhere but in the Windows job of the mirror's workflow, after a merge. `terminal_windows.go` only gathers facts with system calls; every decision is in `judge`, which is tested everywhere with the facts written out. Keep it that way. The job's last step says which Windows tests ran and which skipped: a test that skips itself there must be reported there, and "passed on Windows" is said only of a test that step names as run.
 
 ## Changing behaviour
 
@@ -24,14 +34,17 @@ A change to what cleaning removes, marks or keeps comes with all three:
 
 ## Unicode tables
 
-What is a letter, a symbol, an ideograph or a format character comes from the `unicode` package, so it depends on the Go release: Unicode 15.0 in Go 1.26, 17.0 in Go 1.27. CI runs the tests on both. A test that needs a character added after 15.0 skips it when the tables do not know it, as `TestSelectorsAgainstUnicodeData` does. When the package comment quotes numbers about the tables, recount them before changing them.
+What is a letter, a symbol, an ideograph or a format character comes from the `unicode` package, so it depends on the Go release: Unicode 15.0 in Go 1.26, 17.0 in Go 1.27. CI runs the tests on both. A test that needs a character added after 15.0 skips it when the tables do not know it, as `TestSelectorClasses` does. When the package comment quotes numbers about the tables, recount them before changing them.
+
+Unicode's data files are not kept in this repository. After a change to `takesSelector`, and when a Go release brings a new Unicode version, run `scripts/unicode-data.sh`: it fetches the lists of variation sequences and checks every one. The ordinary tests only check the table of kinds in `selector_test.go`.
 
 ## Layout
 
-`go mod vendor` copies every file that lies beside the package into each program that imports it, and nothing from subdirectories. So this file is in `.claude/` and the Unicode data in `testdata/`. `README.md`, `PORTING.md`, `CHANGELOG.md` and `LICENSE` are at the root because a program wants them next to the vendored code. Put anything else in a subdirectory.
+`go mod vendor` copies every file that lies beside the package into each program that imports it, and nothing from subdirectories. So this file is in `.claude/`, the mirror's workflow in `.github/` and the maintainer's script in `scripts/`. `.woodpecker.yaml` and `renovate.json` have to be at the root and are copied along; they do nothing in a vendor tree. `README.md`, `PORTING.md`, `CHANGELOG.md` and `LICENSE` are at the root because a program wants them next to the vendored code. Put anything else in a subdirectory.
 
 ## Conventions
 
 - Build every invisible or look-alike character from its code point with a name, `string(rune(0x202E))`, in code, tests and docs. A literal one hides in a diff. Agent tooling can turn a typed backslash-u escape into the character itself, so after writing a file run `LC_ALL=C grep -nP '[^\x00-\x7F]' <file>` and account for every hit.
-- CI formats with the newest Go. gofmt of Go 1.27 aligns a table differently from gofmt of Go 1.26 when one key is much longer than the rest, so keep keys short, with a variable for a long one, and both agree.
-- A pushed tag is never moved or deleted. A bad release gets a new patch release.
+- The pipeline formats with the newest Go; the mirror's workflow checks with the gofmt of each release. gofmt of Go 1.27 aligns a table differently from gofmt of Go 1.26 when one key is much longer than the rest, so keep keys short, with a variable for a long one, and both agree.
+- A pushed tag is never moved or deleted: the public module proxy and checksum database keep the first contents they saw. A bad release gets a new patch release.
+- Actions in the mirror's workflow are pinned to a commit, with the release in a comment. The Forgejo's Renovate reads `.github/workflows` and proposes the next one, once this repository is in its list.

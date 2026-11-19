@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "packageRules": [
     {
-      "description": "One CI step runs on the Go release of go.mod's go directive, for its older Unicode tables. That image moves with the directive, by hand.",
+      "description": "One CI step runs on Go 1.26, for its older Unicode tables, until Go 1.26 is no longer supported: Go supports a release until there are two newer ones, so until Go 1.28 is released. Then remove this rule together with the step in .woodpecker.yaml.",
       "matchManagers": ["woodpecker"],
       "matchPackageNames": ["golang"],
       "matchCurrentValue": "/^1\\.26-/",

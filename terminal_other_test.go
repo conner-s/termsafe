@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-func TestOutputKind(t *testing.T) {
-	if kind, _ := outputKind(nil); kind != outNone {
+func TestExamineOutput(t *testing.T) {
+	if kind := examineOutput(nil).kind; kind != outNone {
 		t.Errorf("nil: kind %d, want outNone", kind)
 	}
 
@@ -17,11 +17,11 @@ func TestOutputKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kind, _ := outputKind(file); kind != outNotTerminal {
+	if kind := examineOutput(file).kind; kind != outNotTerminal {
 		t.Errorf("a file: kind %d, want outNotTerminal", kind)
 	}
 	file.Close()
-	if kind, _ := outputKind(file); kind != outNone {
+	if kind := examineOutput(file).kind; kind != outNone {
 		t.Errorf("a closed file: kind %d, want outNone", kind)
 	}
 
@@ -31,18 +31,18 @@ func TestOutputKind(t *testing.T) {
 	}
 	defer r.Close()
 	defer w.Close()
-	if kind, _ := outputKind(w); kind != outNotTerminal {
+	if kind := examineOutput(w).kind; kind != outNotTerminal {
 		t.Errorf("a pipe: kind %d, want outNotTerminal", kind)
 	}
 
-	// /dev/null is a character device, which is all outputKind can see of a
+	// /dev/null is a character device, which is all examineOutput can see of a
 	// terminal.
 	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer null.Close()
-	if kind, _ := outputKind(null); kind != outTerminal {
+	if kind := examineOutput(null).kind; kind != outTerminal {
 		t.Errorf("%s: kind %d, want outTerminal", os.DevNull, kind)
 	}
 }

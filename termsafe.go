@@ -155,7 +155,8 @@
 // no list of the sequences Unicode defines, so the rule goes by class. It
 // keeps every standardized variation sequence, every emoji variation sequence
 // and every sequence registered in the Ideographic Variation Database, as of
-// Unicode 17.0; a test holds it to the first two lists. It also keeps
+// Unicode 17.0. The tests hold it to the kinds of sequence in those lists,
+// and to every sequence when they are given Unicode's files. It also keeps
 // sequences Unicode does not define: any of the 240 ideographic selectors on
 // any of about 100,000 ideographs, where some 39,500 pairs are registered;
 // either presentation selector on any of about 8,400 symbols, where 371 have
@@ -196,9 +197,10 @@
 // as far as it says, not UTF-8, or cannot tell. [Text.ASCII] is the form for
 // the last two, with every character outside ASCII shown as its code point,
 // and [Terminal.Fit] chooses between a Text and its ASCII form. The check
-// reads the locale and, on Windows, the console; it cannot see how the
-// terminal emulator itself is set. A program that draws a Text without asking
-// is assuming UTF-8.
+// reads the locale and, on Windows, what kind of handle the output is; it
+// cannot see how the terminal emulator itself is set. [Terminal.Probe] can:
+// it asks the terminal, for a program that owns it and chooses to. A program
+// that draws a Text without asking either is assuming UTF-8.
 //
 // # Unicode versions
 //

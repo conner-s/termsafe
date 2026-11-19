@@ -5,43 +5,34 @@ page says how to add it to a program, the method for finding every place it
 is needed, the tests that prove the result, and what a repository that
 vendors or builds with Nix has to do as well.
 
-glip is the worked example. `docs/untrusted-text.md` in that repository is
-the table this method produces, and `ui/hostile_test.go` holds the two tests.
+glip, the program the package was written in, is the worked example:
+`docs/untrusted-text.md` in its repository is the table this method
+produces, and `ui/hostile_test.go` holds the tests. nfu
+(`github.com/conner-s/nfu`) is a second one, with a TUI and a plain output.
 
 ## Add the module
 
 ```sh
-export GOPRIVATE=forgejo.kube.internal.conn3r.xyz
-go get forgejo.kube.internal.conn3r.xyz/connerlab/termsafe
+go get github.com/conner-s/termsafe
 ```
 
 ```go
-import "forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+import "github.com/conner-s/termsafe"
 ```
 
 `go get` takes the newest tag and writes it to `go.mod` and `go.sum`. Commit
-both.
+both. The module is public: it comes through the public module proxy and is
+checked against the public checksum database, with no credentials, no extra
+certificate authority and no `GOPRIVATE`. The GitHub repository it comes
+from is a read-only mirror of the owner's forge, where the development
+happens; `README.md` says what that means for a reader on GitHub.
 
-The Forgejo is not on the internet, so the public module proxy and checksum
-database cannot see it. `GOPRIVATE` makes Go skip them and fetch with git
-from the Forgejo itself. Without it the go command sends the module's path
-to proxy.golang.org first and to sum.golang.org to check the download, and
-the second fails. Both were seen with the two services pointed at a dead
-local port. Go asks the Forgejo over HTTPS where the repository
-is, so the machine has to trust the connerlabPKI root certificate. The
-repository is public, so git can clone it over HTTPS without a login where
-git trusts that certificate too. Where git should clone over ssh instead, put
-a rewrite in the environment of the command:
-
-```sh
-export GIT_CONFIG_COUNT=1
-export GIT_CONFIG_KEY_0=url.ssh://git@forgejo.kube.internal.conn3r.xyz/.insteadOf
-export GIT_CONFIG_VALUE_0=https://forgejo.kube.internal.conn3r.xyz/
-```
-
-A program that carries a copy of the package from before it was a module
-(glip had `internal/termsafe`) deletes the copy and changes the import path.
-Nothing else changes. v0.1.0 has the API and the behaviour of that copy.
+A program that used v0.1.0 has it under another path,
+`forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`. That version does not
+resolve under the new path, even if the mirror shows its tag. Change the import path in every file, `go get` this module,
+and run `go mod tidy` to drop the old requirement; `CHANGELOG.md` lists what
+v0.2.0 changed in behaviour. A program that still carries a copy of the
+package from before it was a module deletes the copy and does the same.
 
 To take a later version, read `CHANGELOG.md` for it, `go get` the tag, and
 run the tests below. A release that removes more than the one before can
@@ -150,6 +141,10 @@ safe. `README.md` has the reasons under "Terminals that are not UTF-8".
 - At each conversion, pass the cleaned text through it:
   `terminal.Fit(termsafe.Drop.Line(raw))`. On a UTF-8 terminal that is the
   text itself. On any other it is the ASCII form, `caf<U+00E9>`.
+- A program that owns the terminal may also ask it, before its TUI starts:
+  `terminal = terminal.Probe(os.Stdin, os.Stdout, timeout)`, with the
+  terminal in raw mode for that moment. `README.md`, "Asking the terminal",
+  has the code and the conditions. The answer outranks the environment.
 - Give the user a way to overrule the verdict in both directions, a flag or
   a setting, and build the `Terminal` from it:
   `termsafe.Terminal{Encoding: termsafe.EncodingUTF8}`. The check reads the
@@ -219,6 +214,16 @@ All of them iterate over `termsafe.Samples()`, so a new version of the module
 that adds a sample runs it through the program without a change to the
 tests.
 
+A view may show an escaped form on purpose: the TOML an encoder wrote, with
+an ESC as the six characters `\u001B`, or a name quoted with `%q`. The
+payload of a control string then stands after the escape as readable text,
+and `ViewProblem` reports "the payload of a control sequence is drawn as
+text", because from a cleaner that means half a sequence was removed. For
+such a view that picture is the intended one, but only when the escape is
+there to be read. Have the test allow exactly that finding, and only when
+the drawn text holds the visible escape, and nothing else. nfu's
+`hostile_test.go` has the helper.
+
 A third kind of test is worth its fixtures: capture what the real tools
 print with the program's own arguments, into a file, and replay the bytes
 through the reader, the parser and the view. It is how glip found that
@@ -227,59 +232,30 @@ yt-dlp's progress never reached its progress bar.
 ## A repository that vendors
 
 After `go get`, run `go mod vendor` and commit `go.mod`, `go.sum`,
-`vendor/modules.txt` and
-`vendor/forgejo.kube.internal.conn3r.xyz/connerlab/termsafe/` together.
+`vendor/modules.txt` and `vendor/github.com/conner-s/termsafe/` together.
 
-- Only `go get` and `go mod vendor` need the Forgejo. Builds, tests and CI
-  read `vendor/` and need neither the network nor `GOPRIVATE`.
-- `go mod vendor` copies `termsafe.go`, `inspect.go` and `testkit.go`, so
-  the program's two tests build from the vendored copy, kit included.
+- `go mod vendor` copies `termsafe.go`, `inspect.go`, `testkit.go` and the
+  files of the terminal check and the probe, so the program's tests build
+  from the vendored copy, kit included.
 - It leaves out the package's own tests. The vendored copy cannot be tested
   in place; the tests run in the termsafe repository.
 - It also copies the files that lie beside the package: `README.md`,
-  `PORTING.md`, `CHANGELOG.md`, `LICENSE`, the CI file and `renovate.json`.
-  The first four belong next to vendored code. The last two do nothing
-  there: Woodpecker and Renovate read their files at the root of a
-  repository only, and Renovate's own list of the files it found in glip
-  shows it passing over a vendored CI file. Nothing from a subdirectory is
-  copied, which is why termsafe keeps its instructions for agents in
-  `.claude/` and its test data in `testdata/`.
+  `PORTING.md`, `CHANGELOG.md` and `LICENSE`, which belong next to vendored
+  code, and `.woodpecker.yaml` and `renovate.json`, which do nothing there:
+  Woodpecker and Renovate read their files at the root of a repository
+  only. Nothing from a subdirectory is copied, which is why termsafe keeps
+  the mirror's workflow in `.github/`, its instructions for agents in
+  `.claude/` and its maintainer's script in `scripts/`.
 - Never edit the vendored copy. Fix termsafe, tag it, and take the tag.
 
 ## A repository that builds with Nix
 
-With `vendorHash = null` and a committed `vendor/`, as glip is built in
-nix-pkgs, the Nix expression does not change. Vendor as above.
+Nothing special. termsafe is a public module like any other.
 
-With a pinned `vendorHash`, `buildGoModule` builds the vendor directory
-itself: a fixed-output derivation runs `go mod vendor` with nixpkgs' git and
-nixpkgs' bundle of public certificate authorities. Two things change.
-
-1. The hash. Set `vendorHash = lib.fakeHash`, build, and paste the `got:`
-   hash, as after any change to `go.sum`.
-2. That derivation now has to download termsafe from the Forgejo. Expect it
-   to fail as it stands: the bundle does not hold the connerlabPKI root, and
-   the public proxy does not have the module. Two halves of that have been
-   seen. git, given only that bundle the way `buildGoModule` gives it,
-   refuses the Forgejo's certificate ("unable to get local issuer
-   certificate"). And Go in Renovate's container, which has the public
-   authorities only, fails on another module of this Forgejo with "x509:
-   certificate signed by unknown authority". The Nix build itself has not
-   been run.
-
-Three ways to deal with the second point, the first two already in use in
-these repositories:
-
-- Commit `vendor/` and set `vendorHash = null`. This is what glip does.
-- Take termsafe as a flake input (`flake = false`) pinned to the tag, and in
-  `postPatch` replace the module with that input, so `go mod vendor` copies
-  it from the Nix store and never asks the Forgejo. Triate's `flake.nix` does
-  this for the vigil module and has the working form, including why the
-  replace goes through a relative symlink. The version is then pinned twice,
-  in `go.mod` and in `flake.lock`; move both together.
-- Give the vendor derivation what it lacks through `overrideModAttrs`: a
-  certificate bundle that includes the connerlabPKI root, and `GOPRIVATE`.
-  The builder must also be able to reach the Forgejo. Untried.
+- With `vendorHash = null` and a committed `vendor/`: vendor as above; the
+  Nix expression does not change.
+- With a pinned `vendorHash`: after adding the requirement, refresh the
+  hash. Set `vendorHash = lib.fakeHash`, build, and paste the `got:` hash.
 
 ## What termsafe does not do
 

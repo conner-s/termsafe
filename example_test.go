@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 )
 
 // As in the package's tests, no invisible or look-alike character is written

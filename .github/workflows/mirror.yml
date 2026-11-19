@@ -1,0 +1,173 @@
+# The checks that run on the GitHub mirror, after a merge.
+#
+# termsafe is developed on its owner's forge, where a Woodpecker pipeline
+# (.woodpecker.yaml) is the gate a pull request has to pass. That forge
+# pushes main here. This workflow runs on what arrives, so it never stands
+# before a merge: when it fails, main is already as it is, here and on the
+# forge. It is here for the runners the forge does not have. The Windows job
+# is the only place the Windows half of this package runs at all, and the
+# macOS job is the second system for the probe's pseudo terminal test. The
+# Linux job repeats what Woodpecker checks, so that a green run here means
+# the same commit passed everything.
+#
+# There are no pull requests on a mirror, so it runs on pushes to main and
+# when started by hand.
+#
+# Actions are pinned to a commit, with the release it belongs to in a
+# comment. The forge's Renovate proposes the next one.
+
+name: Mirror
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Each job tests the Go release it asked for and no other.
+  GOTOOLCHAIN: local
+
+jobs:
+  linux:
+    name: Linux, Go ${{ matrix.go }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # What is a letter, a symbol or an ideograph comes from the Unicode
+        # tables of the Go release: 15.0 in Go 1.26, 17.0 in Go 1.27. Programs
+        # built with either get that release's behaviour, so both are tested.
+        #
+        # Keep 1.26 until Go 1.26 is no longer supported. Go supports a
+        # release until there are two newer ones (go.dev/doc/devel/release,
+        # "Release Policy"), so that is the day Go 1.28 is released. Then
+        # remove it here and in .woodpecker.yaml, remove the rule in
+        # renovate.json that holds its image, and raise the go directive in
+        # go.mod. Renovate does not read a matrix, so nothing moves this
+        # entry by itself.
+        go: ['1.26', '1.27']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false # there is no go.sum and nothing to cache
+
+      - name: The Unicode version of this Go release
+        run: go test -run '^TestUnicodeVersion$' -v .
+
+      - name: go vet, here and for the other systems
+        run: |
+          go vet ./...
+          GOOS=linux GOARCH=arm64 go vet ./...
+          GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=darwin GOARCH=arm64 go vet ./...
+
+      # Each Go release formats with its own gofmt. The two disagree about a
+      # table with one very long key, so both have to be satisfied.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Not formatted for the gofmt of Go ${{ matrix.go }}. Run 'gofmt -w .':"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Standard library only
+        run: test "$(go list -m all)" = "github.com/conner-s/termsafe"
+
+      - name: Tests with the race detector, every statement covered
+        run: |
+          go test -race -coverprofile="$RUNNER_TEMP/coverage.out" ./...
+          go tool cover -func="$RUNNER_TEMP/coverage.out" | tail -1
+          go tool cover -func="$RUNNER_TEMP/coverage.out" | tail -1 | grep -q '100.0%'
+
+      # The probe's test against a real pseudo terminal skips itself when it
+      # cannot open one. A skip must not pass for a run.
+      - name: The pseudo terminal test ran
+        run: |
+          out="$(go test -count=1 -run '^TestProbe_OnATerminal$' -v .)"
+          echo "$out"
+          if echo "$out" | grep -q -e '--- SKIP'; then
+            echo "::error::the probe's pseudo terminal test was skipped on this runner"
+            exit 1
+          fi
+
+      - name: Fuzz for 30 seconds
+        run: go test -run='^$' -fuzz='^FuzzClean$' -fuzztime=30s .
+
+  macos:
+    name: macOS, the probe on a pseudo terminal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Tests with the race detector
+        run: go test -race ./...
+
+      - name: The pseudo terminal test ran
+        run: |
+          out="$(go test -count=1 -run '^TestProbe_OnATerminal$' -v .)"
+          echo "$out"
+          if echo "$out" | grep -q -e '--- SKIP'; then
+            echo "::error::the probe's pseudo terminal test was skipped on this runner"
+            exit 1
+          fi
+
+  # The only place the Windows half of this package runs at all.
+  #
+  # TestWindowsExamineOutput needs no console: it looks at a pipe, a file and
+  # NUL. TestWindowsConsoleReceivesCharacters needs a console's screen buffer
+  # to write to and read back from. A runner has no console window; the test
+  # takes the console its process was given, asks Windows for one if it has
+  # none, and skips itself only if both fail. The last step says which of the
+  # three happened, so that a skip does not read as a pass.
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Go source is LF, also in the multi-line strings of the tests.
+      - name: Keep line endings as they are in the repository
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Tests
+        run: go test ./...
+
+      - name: The Windows tests, one by one
+        run: go test -count=1 -run 'Windows' -v . | tee "$RUNNER_TEMP/windows.txt"
+
+      - name: Which of them ran
+        run: |
+          report() { echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          log="$RUNNER_TEMP/windows.txt"
+          for test in TestWindowsExamineOutput TestWindowsConsoleReceivesCharacters; do
+            if grep -q -e "--- PASS: $test" "$log"; then
+              report "RAN AND PASSED: $test"
+            elif grep -q -e "--- SKIP: $test" "$log"; then
+              report "NOT RUN, SKIPPED: $test. What it would show is still unverified."
+              echo "::warning title=A Windows test did not run::$test skipped itself on this runner. This is not a pass."
+            else
+              report "DID NOT PASS: $test"
+              exit 1
+            fi
+          done

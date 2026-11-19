@@ -1,3 +1,3 @@
-module forgejo.kube.internal.conn3r.xyz/connerlab/termsafe
+module github.com/conner-s/termsafe
 
 go 1.26

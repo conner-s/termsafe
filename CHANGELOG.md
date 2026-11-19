@@ -7,12 +7,26 @@ program that imports it. `README.md` says what a v0 version number promises.
 
 Nothing yet.
 
-## v0.2.0 - not tagged yet
+## v0.2.0 - 2026-11-19
 
-Two things change what cleaning does, and the package stops assuming a UTF-8
-terminal. Everything v0.1.0 exported is still there with the same signature.
+The module has a new path and a new home. Two things change what cleaning
+does, and the package stops assuming a UTF-8 terminal. Everything v0.1.0
+exported is still there with the same signature.
 
 ### Changed
+
+- **The module path changed; update imports.** The module is now
+  `github.com/conner-s/termsafe`, so that a program using it builds
+  anywhere without a private certificate authority. The repository on
+  GitHub is a public, read-only mirror; development stays on the owner's
+  forge. v0.1.0 was published as
+  `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe` on that forge and
+  does not resolve under the new path, even where the mirror shows its tag:
+  v0.2.0 is the first version here.
+  Who it affects: every program that used v0.1.0. Change the import path in
+  every file, `go get github.com/conner-s/termsafe`, and `go mod tidy` to
+  drop the old requirement. A build no longer needs `GOPRIVATE` or the
+  forge's root certificate for this module.
 
 - **A variation selector that selects nothing is now an invisible
   character.** A selector (U+FE00 to U+FE0F, U+E0100 to U+E01EF, the
@@ -49,9 +63,19 @@ terminal. Everything v0.1.0 exported is still there with the same signature.
 ### Added
 
 - `CheckTerminal`, `Terminal` and `Encoding` (`EncodingUnknown`,
-  `EncodingUTF8`, `EncodingNotUTF8`): what the locale variables and, on
-  Windows, the console say about whether the terminal decodes UTF-8, with
-  the reason and the evidence as text a program can show.
+  `EncodingUTF8`, `EncodingNotUTF8`): what the environment says about
+  whether the terminal decodes UTF-8, with the reason and the evidence as
+  text a program can show. On Unix it reads the locale variables. On
+  Windows it goes by the kind of handle: a console is UTF-8 because Go
+  writes to it in UTF-16, an MSYS or Cygwin terminal goes by the locale its
+  shell exports, a pipe or a file is not known. The Windows part is compiled
+  and vetted and has never run.
+- `Terminal.Probe`: asks the terminal itself, for a program that owns it and
+  calls this. It writes a cursor position query, one two-byte character and
+  a second query through the input and output the caller hands in, within a
+  timeout, and blanks what it drew. Its answer outranks the environment's.
+  It asks nothing unless both files are a terminal in raw mode. Linux on
+  amd64 and arm64, and macOS; elsewhere it answers "cannot tell".
 - `Text.ASCII`: the text with every character outside ASCII shown by its
   code point, for a terminal that cannot be taken as UTF-8. `Terminal.Fit`
   chooses between a text and its ASCII form.
@@ -63,8 +87,13 @@ terminal. Everything v0.1.0 exported is still there with the same signature.
   add; `PORTING.md` has the steps and the third test.
 - The Unicode version the tests ran under is printed by
   `TestUnicodeVersion`, and CI runs the tests on Go 1.26 as well as 1.27.
-- `testdata/unicode` holds two data files of Unicode 17.0, under the Unicode
-  License V3, for the test that holds the selector rule to Unicode's lists.
+  Beside the forge's pipeline, which gates a pull request, a workflow on
+  the GitHub mirror runs after each merge, with a Windows job and a macOS
+  job. It is the first place the Windows half of the package runs.
+- `scripts/unicode-data.sh` fetches Unicode's lists of variation sequences
+  and runs the test that holds the selector rule to every one of them. The
+  lists are not in the repository; the ordinary tests check a table of the
+  41 kinds of sequence instead.
 
 ### Moved
 
@@ -75,8 +104,8 @@ terminal. Everything v0.1.0 exported is still there with the same signature.
 ## v0.1.0 - 2026-11-19
 
 The first release. This is the package glip carried as `internal/termsafe`,
-as it stood on glip's branch `deps-2026-11` at e3ef2ad and was reviewed in
-connerlab/glip#12, moved into a module of its own. Its API and behaviour are
+as it stood on glip's branch `deps-2026-11` at e3ef2ad, moved into a module
+of its own. Its API and behaviour are
 those of that copy.
 
 ### Added
@@ -95,4 +124,5 @@ those of that copy.
 ### Changed
 
 - The import path, from a directory inside each program to
-  `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`.
+  `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`, on a private forge.
+  That path ended with this version: see v0.2.0.
