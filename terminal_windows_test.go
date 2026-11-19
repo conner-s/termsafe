@@ -11,10 +11,10 @@ import (
 )
 
 // The tests in this file had run on no machine when they were written: the
-// module is developed on macOS and its CI is Linux. They compile and pass
-// go vet for windows, and that is all that is known of them. Run them on
-// Windows, from a console window, to turn what judge takes from Go's source
-// into something seen:
+// module is developed on macOS. They compile and pass go vet for windows.
+// The workflow on the GitHub mirror runs them on a Windows runner, after a
+// merge, and reports which of them ran, passed or skipped. To turn what judge takes from Go's source into
+// something seen on a real console window:
 //
 //	go test -run Windows -v .
 
@@ -23,6 +23,7 @@ var (
 	procReadConsoleOutputCharacterW = kernel32.NewProc("ReadConsoleOutputCharacterW")
 	procSetConsoleCursorPosition    = kernel32.NewProc("SetConsoleCursorPosition")
 	procSetConsoleOutputCP          = kernel32.NewProc("SetConsoleOutputCP")
+	procAllocConsole                = kernel32.NewProc("AllocConsole")
 )
 
 // coord is COORD; screenBufferInfo is CONSOLE_SCREEN_BUFFER_INFO.
@@ -94,7 +95,14 @@ func TestWindowsExamineOutput(t *testing.T) {
 func TestWindowsConsoleReceivesCharacters(t *testing.T) {
 	console, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
 	if err != nil {
-		t.Skipf("no console to write to: %v", err)
+		// A process that was started without a console, as on a CI
+		// runner, can ask Windows for one. It has no window anybody
+		// sees, but it has a screen buffer, which is all this needs.
+		procAllocConsole.Call()
+		console, err = os.OpenFile("CONOUT$", os.O_RDWR, 0)
+	}
+	if err != nil {
+		t.Skipf("no console to write to, and none to be had: %v", err)
 	}
 	defer console.Close()
 
