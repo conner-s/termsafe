@@ -4,20 +4,18 @@ package termsafe
 
 import "os"
 
-// outputKind says whether out is a character device. A terminal is one, and
-// so is /dev/null: telling them apart takes an ioctl that the standard
-// library does not offer portably, and the answer only goes into the
-// evidence.
-func outputKind(out *os.File) (output, uint32) {
+// examineOutput says whether out is a character device. A terminal is one,
+// and so is /dev/null. The answer only goes into the evidence.
+func examineOutput(out *os.File) outputFacts {
 	if out == nil {
-		return outNone, 0
+		return outputFacts{kind: outNone}
 	}
 	info, err := out.Stat()
 	if err != nil {
-		return outNone, 0
+		return outputFacts{kind: outNone}
 	}
 	if info.Mode()&os.ModeCharDevice != 0 {
-		return outTerminal, 0
+		return outputFacts{kind: outTerminal}
 	}
-	return outNotTerminal, 0
+	return outputFacts{kind: outNotTerminal}
 }
