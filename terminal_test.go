@@ -84,7 +84,7 @@ func TestJudge_Evidence(t *testing.T) {
 			"LC_ALL is not set",
 			"LC_CTYPE=UTF-8",
 		}},
-		{"over ssh, inside tmux", outTerminal, env{"LANG": "en_US.UTF-8", "SSH_CONNECTION": "10.0.0.1 50000 10.0.0.2 22", "TMUX": "/tmp/tmux-1000/default,1,0"}, []string{
+		{"over ssh, inside tmux", outTerminal, env{"LANG": "en_US.UTF-8", "SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22", "TMUX": "/tmp/tmux-1000/default,1,0"}, []string{
 			"the output is a character device, as a terminal is",
 			"LC_ALL is not set",
 			"LC_CTYPE is not set",
@@ -198,7 +198,7 @@ func TestJudge_Windows(t *testing.T) {
 		{
 			name:         "ssh into Windows: sshd gives the shell a ConPTY, so a console, and the far terminal is not known",
 			facts:        outputFacts{kind: outConsole, consoleMode: 0x0007, codePage: 437},
-			env:          env{"SSH_CONNECTION": "10.0.0.1 50000 10.0.0.2 22"},
+			env:          env{"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"},
 			want:         EncodingUTF8,
 			wantReason:   console,
 			wantEvidence: []string{"the output is a Windows console", overSSH},

@@ -27,8 +27,8 @@ certificate authority and no `GOPRIVATE`. The GitHub repository it comes
 from is a read-only mirror of the owner's forge, where the development
 happens; `README.md` says what that means for a reader on GitHub.
 
-A program that used v0.1.0 has it under another path,
-`forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`. That version does not
+A program that used v0.1.0 has it under another path, on the owner's
+private forge. That version does not
 resolve under the new path, even if the mirror shows its tag. Change the import path in every file, `go get` this module,
 and run `go mod tidy` to drop the old requirement; `CHANGELOG.md` lists what
 v0.2.0 changed in behaviour. A program that still carries a copy of the

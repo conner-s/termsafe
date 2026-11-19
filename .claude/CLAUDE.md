@@ -4,11 +4,11 @@ A Go package that makes text a program did not write safe to draw in a terminal.
 
 Where things happen:
 
-- Development is on the owner's Forgejo, `connerlab/termsafe`: issues, pull requests, the Woodpecker pipeline in `.woodpecker.yaml` that gates a pull request, and Renovate. A change goes through a pull request there.
+- Development is on the owner's private forge: issues, pull requests, the Woodpecker pipeline in `.woodpecker.yaml` that gates a pull request, and Renovate. A change goes through a pull request there.
 - The module path is `github.com/conner-s/termsafe`. The GitHub repository is a read-only mirror: the Forgejo pushes `main` to it. Nothing is committed, merged or reviewed on GitHub.
 - `.github/workflows/mirror.yml` runs on the mirror after each push: Windows, macOS, and Linux again. It runs after the merge, so its failure means `main` is already wrong. Fix that through a pull request on the Forgejo, and tag no release from a commit whose mirror run is not green.
 - A release is tagged on the Forgejo and must be on GitHub before Go can fetch it. Confirm the tag arrived (`git ls-remote --tags https://github.com/conner-s/termsafe`); do not assume the mirror carries tags.
-- The module was `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe` for v0.1.0 only. That path stands in the history notes of `README.md`, `PORTING.md` and `CHANGELOG.md` and nowhere else.
+- v0.1.0 was published under a module path on the private forge. The history notes in `README.md`, `PORTING.md` and `CHANGELOG.md` say so without naming the host, and nothing in this repository names an internal host or address: `scripts/host-neutral.sh` fails the pipeline if a tracked file does. The mirror, and every module zip the Go proxy keeps for good, is public.
 
 ## Invariants
 
