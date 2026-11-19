@@ -8,8 +8,9 @@ import (
 
 // This file is the test kit: hostile samples, and the two checks a program
 // runs to prove that none of them gets through it. It is in the package, not
-// beside it, so that the directory can be copied into another module without
-// an import path to edit. PORTING.md says how to write the two tests.
+// in one beside it: the checks use the cleaner's own tables, and a program's
+// tests get the samples that belong to the version of the cleaner it imports.
+// PORTING.md says how to write the two tests.
 
 // A Sample is one piece of hostile outside text.
 type Sample struct {

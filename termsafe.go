@@ -124,7 +124,8 @@
 // testing for that is stricter and simpler than any of this.
 //
 // The package depends on the standard library only and nothing in it is
-// specific to one program: copy the directory.
+// specific to one program. PORTING.md, beside this file, says how to put it
+// into one.
 package termsafe
 
 import (
