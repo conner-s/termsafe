@@ -35,6 +35,10 @@
 //     it is printed.
 //   - Keep the raw string for everything that is not display (opening the
 //     file, the clipboard, parsing). A Text is for the screen only.
+//   - Call [CheckTerminal] once at start and pass every Text through
+//     [Terminal.Fit] on its way to the screen. What follows holds on a
+//     terminal that decodes UTF-8; on any other, only the ASCII form that Fit
+//     then returns is safe. See "Terminals that are not UTF-8" below.
 //
 // # What a Text never holds
 //
@@ -45,6 +49,9 @@
 //     results are joined.
 //   - A bidirectional control or an invisible format character (listed
 //     below), under either policy.
+//   - A variation selector that selects nothing: one that does not stand
+//     directly after a character it can modify, or a second one in a row.
+//   - A line break other than a newline.
 //
 // Printable text, non-ASCII included, is unchanged.
 //
@@ -67,7 +74,13 @@
 //   - Every other control character, by itself.
 //
 // CR LF becomes a newline, and so does a lone CR: it is how progress output
-// separates the states of a line it redraws.
+// separates the states of a line it redraws. The line separator U+2028 and
+// the paragraph separator U+2029 are line breaks too: Clean makes each a
+// newline and Line a space, so a newline is the only line break a Text holds
+// and a Line holds none. Like a carriage return they are white space, and the
+// Report does not count them. Inside a control string they are payload: only
+// a newline or a carriage return ends an unterminated string, as in a
+// terminal.
 //
 // A byte that is not valid UTF-8 becomes U+FFFD and what follows it stays as
 // text. That covers the 8-bit forms of the C1 controls (0x80 to 0x9F as single
@@ -100,14 +113,62 @@
 //     Cyrillic letter, or white space ("pay", U+200D, "pal").
 //   - Tag characters U+E0020 to U+E007F outside an emoji flag. They are
 //     invisible, and a run of them can carry a whole hidden sentence.
+//   - Variation selectors (U+FE00 to U+FE0F, U+E0100 to U+E01EF and the
+//     Mongolian U+180B to U+180D and U+180F) that select nothing. A selector
+//     draws nothing itself, and a run of them after any character can carry
+//     hidden bytes the way tag characters can. One selector directly after a
+//     character it can modify is kept; every other one counts as invisible.
 //
 // These are left alone, because legitimate text needs them: a joiner after
 // any other character (the zero width joiner builds emoji such as a family
 // or a profession, and Arabic, Persian and Indic scripts use both joiners);
-// variation selectors (emoji and ideograph presentation); tag characters
+// a variation selector on its base, as described next; tag characters
 // that follow U+1F3F4, which spell the flags of England, Scotland and Wales;
 // the Arabic number signs, which are format characters that do draw. Text in
 // a right-to-left script is ordinary text and is never touched.
+//
+// # Variation selectors
+//
+// A selector is kept when it stands directly after one of these, with no
+// combining mark and no other selector in between:
+//
+//   - U+FE0E and U+FE0F (text and emoji presentation): a symbol of the
+//     categories So and Sm outside ASCII; the keycap bases #, * and 0 to 9;
+//     and U+203C, U+2049, U+2139, U+3030 and U+303D, the five emoji that are
+//     not symbols.
+//   - U+E0100 to U+E01EF (ideographic variation sequences): a unified
+//     ideograph.
+//   - U+FE00 to U+FE02: a unified ideograph, and the quotation marks U+2018,
+//     U+2019, U+201C and U+201D.
+//   - U+FE00 and U+FE01: the ideographic and fullwidth punctuation U+3001,
+//     U+3002, U+FF01, U+FF0C, U+FF0E, U+FF1A, U+FF1B and U+FF1F, and the
+//     mathematical script capitals.
+//   - U+FE00 alone: a mathematical symbol (Sm) outside ASCII, the digit zero
+//     and the fullwidth zero, and a character of the Myanmar, Phags-pa or
+//     Manichaean script.
+//   - U+FE00 to U+FE06: an Egyptian hieroglyph.
+//   - The Mongolian selectors: a Mongolian letter.
+//
+// U+FE07 to U+FE0D are in no sequence and are never kept.
+//
+// The standard library knows the category and script of a character but has
+// no list of the sequences Unicode defines, so the rule goes by class. It
+// keeps every standardized variation sequence, every emoji variation sequence
+// and every sequence registered in the Ideographic Variation Database, as of
+// Unicode 17.0; a test holds it to the first two lists. It also keeps
+// sequences Unicode does not define: any of the 240 ideographic selectors on
+// any of about 100,000 ideographs, where some 39,500 pairs are registered;
+// either presentation selector on any of about 8,400 symbols, where 371 have
+// both presentations; and likewise for the smaller classes. What is left of
+// the hidden channel is therefore one selector on each character that could
+// carry one: nothing in ASCII, Latin, Greek or Cyrillic text, one of two on a
+// symbol, and up to a byte for each ideograph in Chinese, Japanese or Korean
+// text. Closing that needs the lists themselves.
+//
+// A selector is judged by what stands before it in the result. Under Drop,
+// when an invisible character between a base and its selector is removed, the
+// selector meets its base and stays; under Mark the marker stands between
+// them and the selector is marked too.
 //
 // # Look-alike characters
 //
@@ -122,6 +183,49 @@
 // under Latin or under no script (fullwidth letters, mathematical letters).
 // Where a name must be ASCII, as package names in most registries must,
 // testing for that is stricter and simpler than any of this.
+//
+// # Terminals that are not UTF-8
+//
+// Everything above is about characters, and holds when the terminal decodes
+// the bytes it is sent as UTF-8. A terminal in an 8-bit mode does not: it
+// reads each of the bytes 0x80 to 0x9F as a C1 control, and ordinary
+// characters hold those bytes in their UTF-8 encoding. U+00DB is C3 9B, and
+// 9B is CSI. No choice of characters is safe there, only ASCII.
+//
+// [CheckTerminal] says what the environment tells about the terminal: UTF-8
+// as far as it says, not UTF-8, or cannot tell. [Text.ASCII] is the form for
+// the last two, with every character outside ASCII shown as its code point,
+// and [Terminal.Fit] chooses between a Text and its ASCII form. The check
+// reads the locale and, on Windows, the console; it cannot see how the
+// terminal emulator itself is set. A program that draws a Text without asking
+// is assuming UTF-8.
+//
+// # Unicode versions
+//
+// Which characters are letters, symbols, ideographs, format characters and
+// members of a script comes from the unicode package, so the tables are those
+// of the Go release a program is built with: Unicode 15.0 in Go 1.26, Unicode
+// 17.0 in Go 1.27. The toolchain of the program decides, not this module.
+//
+// Between those two versions the sets of bidirectional controls, format
+// characters, default-ignorable characters and variation selectors are the
+// same, and no character of 15.0 changed in any property used here. What
+// differs is the 10,615 characters added since. Built with Go 1.26 the
+// package does not know them, so:
+//
+//   - a variation selector after one of them (4,938 new ideographs, 3,995
+//     new hieroglyphs, 846 new symbols) is removed or marked, where Go 1.27
+//     keeps it;
+//   - [Text.MixedScripts] does not count them as letters (9,568 are, 11 of
+//     them Latin and 2 Cyrillic, the rest in other scripts, 11 of which are
+//     new), so a word they stand in is split there and is not reported;
+//   - a joiner after one of the new Latin or Cyrillic letters is kept, where
+//     Go 1.27 removes it.
+//
+// A newer Go only ever knows more characters, and none loses a property it
+// had. What that does to one input goes both ways, as the list shows: a
+// selector is kept that was removed, a joiner is removed that was kept, a
+// word is reported that was not.
 //
 // The package depends on the standard library only and nothing in it is
 // specific to one program. PORTING.md, beside this file, says how to put it
@@ -171,8 +275,9 @@ func (p Policy) Clean(s string) Text {
 	return Text{out}
 }
 
-// Line returns s made safe to draw as one line: newlines and tabs become
-// spaces. Use it for a log line, a status, a file path or a URL.
+// Line returns s made safe to draw as one line: newlines, tabs and the other
+// line breaks become spaces. Use it for a log line, a status, a file path or
+// a URL.
 func (p Policy) Line(s string) Text {
 	out, _ := clean(s, true, p)
 	return Text{out}
@@ -192,7 +297,8 @@ func (p Policy) LineReport(s string) (Text, Report) {
 
 // A Report counts what cleaning took out of one string. The zero Report means
 // the text came through as it was, apart from white space: a carriage return
-// made a newline, or Line's newlines and tabs made spaces, are not counted.
+// or a line or paragraph separator made a newline, or Line's newlines and
+// tabs made spaces, are not counted.
 //
 // A Report holds numbers only, never any of the bytes that were removed.
 type Report struct {
@@ -217,7 +323,8 @@ type Report struct {
 	// dropped or marked them.
 	Bidi int
 	// Invisible is the number of invisible format characters, counted
-	// whether the policy dropped or marked them.
+	// whether the policy dropped or marked them. A variation selector
+	// that selects nothing is one of them.
 	Invisible int
 }
 
@@ -290,6 +397,41 @@ func (t Text) Truncate(max int) Text {
 	return Text{t.s[:end] + tail}
 }
 
+// ASCII returns t with every character outside ASCII shown by its code point,
+// such as <U+65E5> for a Han character: the same marker the [Mark] policy
+// writes. The result holds printable ASCII and, where t had them, newlines and
+// tabs, and no other byte.
+//
+// Use it for a terminal that cannot be taken to decode UTF-8; [CheckTerminal]
+// says whether that is so. In an 8-bit terminal the bytes 0x80 to 0x9F are C1
+// controls, and ordinary characters hold those bytes in their UTF-8 encoding
+// (U+00DB is C3 9B, and 9B is CSI), so there only ASCII is safe to draw. A
+// text that is ASCII already is returned as it is.
+//
+// The markers make the text longer, eight characters or more for one. Call
+// [Text.MixedScripts] before ASCII: afterwards there are no letters of other
+// scripts left to find.
+func (t Text) ASCII() Text {
+	i := 0
+	for i < len(t.s) && t.s[i] < utf8.RuneSelf {
+		i++
+	}
+	if i == len(t.s) {
+		return t
+	}
+	var b strings.Builder
+	b.Grow(len(t.s) + 16)
+	b.WriteString(t.s[:i])
+	for _, r := range t.s[i:] {
+		if r < utf8.RuneSelf {
+			b.WriteByte(byte(r))
+			continue
+		}
+		writeMarker(&b, r)
+	}
+	return Text{b.String()}
+}
+
 const (
 	escByte = 0x1b
 	belByte = 0x07
@@ -299,6 +441,21 @@ const (
 	blackFlag = 0x1f3f4 // starts an emoji flag spelled with tag characters
 	tagFirst  = 0xe0020
 	tagLast   = 0xe007f // the cancel tag, which ends a flag
+
+	lineSeparator      = 0x2028
+	paragraphSeparator = 0x2029
+
+	// The variation selectors that have a use, by the names Unicode gives
+	// them. VS8 to VS14 (U+FE07 to U+FE0D) have none.
+	vs1              = 0xfe00 // the first of VS1 to VS16
+	vs2              = 0xfe01
+	vs3              = 0xfe02
+	vs7              = 0xfe06  // the last that turns or mirrors a hieroglyph
+	textSelector     = 0xfe0e  // VS15, text presentation
+	emojiSelector    = 0xfe0f  // VS16, emoji presentation
+	ideographicFirst = 0xe0100 // VS17, the first for ideographs
+	mongolianFirst   = 0x180b  // the Mongolian free variation selectors
+	mongolianLast    = 0x180f
 )
 
 // clean is the sanitiser. oneLine selects Line's treatment of newline, tab
@@ -324,11 +481,14 @@ func clean(s string, oneLine bool, policy Policy) (string, Report) {
 	b.WriteString(s[:i])
 
 	// prev is the last character written, 0 at the start of the text and
-	// of every line: a joiner is judged by what it follows. inFlag is set
-	// from a black flag to the end of the tag characters after it.
-	var prev rune
+	// of every line: a joiner is judged by what it follows. last is the
+	// same, except that a combining mark counts too: a variation selector
+	// is judged by what stands directly before it. inFlag is set from a
+	// black flag to the end of the tag characters after it.
+	var prev, last rune
 	if i > 0 {
 		prev = rune(s[i-1])
+		last = prev
 	}
 	inFlag := false
 
@@ -345,7 +505,7 @@ func clean(s string, oneLine bool, policy Policy) (string, Report) {
 				c = ' '
 			}
 			b.WriteByte(c)
-			prev = 0
+			prev, last = 0, 0
 			i++
 		case c == '\r':
 			i++
@@ -357,13 +517,13 @@ func clean(s string, oneLine bool, policy Policy) (string, Report) {
 			} else {
 				b.WriteByte('\n')
 			}
-			prev = 0
+			prev, last = 0, 0
 		case c < 0x20 || c == 0x7f:
 			rep.Controls++
 			i++
 		case c < utf8.RuneSelf:
 			b.WriteByte(c)
-			prev = rune(c)
+			prev, last = rune(c), rune(c)
 			i++
 		default:
 			r, size := utf8.DecodeRuneInString(s[i:])
@@ -373,17 +533,27 @@ func clean(s string, oneLine bool, policy Policy) (string, Report) {
 			case r == utf8.RuneError && size == 1:
 				rep.Invalid++
 				b.WriteRune(utf8.RuneError)
-				prev = utf8.RuneError
+				prev, last = utf8.RuneError, utf8.RuneError
 				i++
 			case r >= 0x80 && r <= 0x9f:
 				i = skipC1(s, i+size, r, &rep)
+			case r == lineSeparator || r == paragraphSeparator:
+				// A line break like the others: a newline, or a space
+				// where the text must stay one line.
+				if oneLine {
+					b.WriteByte(' ')
+				} else {
+					b.WriteByte('\n')
+				}
+				prev, last = 0, 0
+				i += size
 			case isBidiControl(r):
 				rep.Bidi++
-				prev = mark(&b, r, policy, prev)
+				prev, last = mark(&b, r, policy, prev, last)
 				i += size
-			case isInvisible(r, prev, wasInFlag):
+			case isInvisible(r, prev, last, wasInFlag):
 				rep.Invisible++
-				prev = mark(&b, r, policy, prev)
+				prev, last = mark(&b, r, policy, prev, last)
 				i += size
 			default:
 				b.WriteString(s[i : i+size])
@@ -392,6 +562,7 @@ func clean(s string, oneLine bool, policy Policy) (string, Report) {
 				if !unicode.IsMark(r) {
 					prev = r
 				}
+				last = r
 				inFlag = r == blackFlag || (wasInFlag && r >= tagFirst && r < tagLast)
 				i += size
 			}
@@ -401,13 +572,19 @@ func clean(s string, oneLine bool, policy Policy) (string, Report) {
 }
 
 // mark writes the marker for r under the Mark policy and nothing under Drop.
-// It returns the last character written.
-func mark(b *strings.Builder, r rune, policy Policy, prev rune) rune {
+// It returns what prev and last are afterwards: the marker's last character,
+// or what they were.
+func mark(b *strings.Builder, r rune, policy Policy, prev, last rune) (rune, rune) {
 	if policy == Drop {
-		return prev
+		return prev, last
 	}
+	writeMarker(b, r)
+	return '>', '>'
+}
+
+// writeMarker writes the visible form of r, such as <U+202E>.
+func writeMarker(b *strings.Builder, r rune) {
 	fmt.Fprintf(b, "<U+%04X>", r)
-	return '>'
 }
 
 // isBidiControl reports whether r is one of the twelve bidirectional
@@ -417,16 +594,17 @@ func isBidiControl(r rune) bool {
 }
 
 // isInvisible reports whether r is an invisible format character where it
-// stands. prev is the character before it, 0 at the start of a line, and
-// inFlag says whether r follows a black flag and its tag characters.
-func isInvisible(r, prev rune, inFlag bool) bool {
+// stands. prev is the character before it, 0 at the start of a line; last is
+// what stands directly before it, a combining mark included; inFlag says
+// whether r follows a black flag and its tag characters.
+func isInvisible(r, prev, last rune, inFlag bool) bool {
 	switch {
 	case r == nonJoiner || r == joiner:
 		return !takesJoiner(prev)
 	case r >= tagFirst && r <= tagLast:
 		return !inFlag
 	case unicode.Is(unicode.Variation_Selector, r):
-		return false
+		return !takesSelector(last, r)
 	case unicode.Is(unicode.Cf, r):
 		// Format characters that draw: the Arabic and other number signs
 		// that enclose the digits after them, and the Egyptian
@@ -446,6 +624,78 @@ func takesJoiner(prev rune) bool {
 		return false
 	}
 	return !unicode.In(prev, unicode.Latin, unicode.Greek, unicode.Cyrillic)
+}
+
+// takesSelector reports whether the variation selector sel, directly after
+// base, can be one of the sequences Unicode defines: the emoji and text
+// presentation sequences, the standardized variation sequences, the
+// ideographic variation sequences and the Mongolian ones. The standard
+// library has no list of the sequences, so each selector is matched to the
+// class of character it is defined for; the package comment says where that
+// is wider than the list. A selector is never a base, so of two in a row the
+// second fails here.
+func takesSelector(base, sel rune) bool {
+	switch {
+	case base < utf8.RuneSelf:
+		// The keycap bases take either presentation; a zero takes VS1, the
+		// form with a stroke through it.
+		if sel == textSelector || sel == emojiSelector {
+			return base == '#' || base == '*' || (base >= '0' && base <= '9')
+		}
+		return sel == vs1 && base == '0'
+	case sel >= mongolianFirst && sel <= mongolianLast:
+		return unicode.Is(unicode.Mongolian, base) && unicode.IsLetter(base)
+	case sel >= ideographicFirst:
+		return unicode.Is(unicode.Unified_Ideograph, base)
+	case sel == textSelector || sel == emojiSelector:
+		// Every emoji that has both presentations is a symbol, apart from
+		// five: the double exclamation mark, the exclamation question
+		// mark, the information source, the wavy dash and the part
+		// alternation mark.
+		return unicode.In(base, unicode.So, unicode.Sm) ||
+			base == 0x203c || base == 0x2049 || base == 0x2139 || base == 0x3030 || base == 0x303d
+	case sel > vs7:
+		return false
+	case unicode.Is(unicode.Egyptian_Hieroglyphs, base):
+		return unicode.IsLetter(base) // VS1 to VS7 turn or mirror a hieroglyph
+	case sel > vs3:
+		return false
+	case unicode.Is(unicode.Unified_Ideograph, base):
+		return true // VS1 to VS3: the forms of the compatibility ideographs
+	case base == 0x2018 || base == 0x2019 || base == 0x201c || base == 0x201d:
+		return true // VS1 to VS3: where a quotation mark sits in its cell
+	case sel == vs3:
+		return false
+	case isEastAsianStop(base) || isScriptCapital(base):
+		return true // VS1 and VS2
+	case sel == vs2:
+		return false
+	}
+	// VS1 alone: variants of mathematical operators, the fullwidth zero with
+	// a stroke, dotted Myanmar letters, and letters of Phags-pa and
+	// Manichaean.
+	return unicode.Is(unicode.Sm, base) || base == 0xff10 ||
+		unicode.In(base, unicode.Myanmar, unicode.Phags_Pa, unicode.Manichaean)
+}
+
+// isEastAsianStop reports whether r is one of the eight ideographic and
+// fullwidth punctuation marks that VS1 and VS2 place within their cell.
+func isEastAsianStop(r rune) bool {
+	switch r {
+	case 0x3001, 0x3002, 0xff01, 0xff0c, 0xff0e, 0xff1a, 0xff1b, 0xff1f:
+		return true
+	}
+	return false
+}
+
+// isScriptCapital reports whether r is a mathematical script capital, which
+// VS1 and VS2 set in chancery or roundhand style.
+func isScriptCapital(r rune) bool {
+	switch r {
+	case 0x210b, 0x2110, 0x2112, 0x211b, 0x212c, 0x2130, 0x2131, 0x2133:
+		return true
+	}
+	return r >= 0x1d49c && r <= 0x1d4b5
 }
 
 // skipEscape is called with i just past an ESC. It returns the index of the

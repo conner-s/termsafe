@@ -1,3 +1,12 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json"
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "description": "One CI step runs on the Go release of go.mod's go directive, for its older Unicode tables. That image moves with the directive, by hand.",
+      "matchManagers": ["woodpecker"],
+      "matchPackageNames": ["golang"],
+      "matchCurrentValue": "/^1\\.26-/",
+      "enabled": false
+    }
+  ]
 }
