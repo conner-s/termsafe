@@ -1,11 +1,46 @@
-# Using termsafe in another project
+# Using termsafe in a program
 
-Copy this directory. It imports only the standard library and nothing from
-the program it sits in, so it builds wherever it lands. Keep it identical
-across projects: fix a bug here and copy it again.
+termsafe is one Go package in its own module, with no dependencies. This
+page says how to add it to a program, the method for finding every place it
+is needed, the two tests that prove the result, and what a repository that
+vendors or builds with Nix has to do as well.
 
 glip is the worked example. `docs/untrusted-text.md` in that repository is
-the table this method produces.
+the table this method produces, and `ui/hostile_test.go` holds the two tests.
+
+## Add the module
+
+```sh
+export GOPRIVATE=forgejo.kube.internal.conn3r.xyz
+go get forgejo.kube.internal.conn3r.xyz/connerlab/termsafe
+```
+
+```go
+import "forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+```
+
+`go get` takes the newest tag and writes it to `go.mod` and `go.sum`. Commit
+both.
+
+The Forgejo is not on the internet, so the public module proxy and checksum
+database cannot see it. `GOPRIVATE` makes Go skip them and fetch with git
+from the Forgejo itself. Go asks the Forgejo over HTTPS where the repository
+is, so the machine has to trust the connerlabPKI root certificate. Where git
+should then clone over ssh, put a rewrite in the environment of the command:
+
+```sh
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=url.ssh://git@forgejo.kube.internal.conn3r.xyz/.insteadOf
+export GIT_CONFIG_VALUE_0=https://forgejo.kube.internal.conn3r.xyz/
+```
+
+A program that carries a copy of the package from before it was a module
+(glip had `internal/termsafe`) deletes the copy and changes the import path.
+Nothing else changes. v0.1.0 has the API and the behaviour of that copy.
+
+To take a later version, read `CHANGELOG.md` for it, `go get` the tag, and
+run the two tests below. A release that removes more than the one before can
+change what a test of yours expects to see drawn.
 
 ## The method
 
@@ -101,7 +136,9 @@ that is what the report is for.
 
 ## The two tests
 
-Both come from the kit in `testkit.go`.
+Write both in the program, with the kit the package exports: `Samples`,
+`SampleMarker`, `ViewProblem` and `TerminalProblem`. Copy glip's
+`ui/hostile_test.go` and replace its table of entries with the program's own.
 
 1. **The view test.** Make a table of every way outside text gets into the
    program (one entry per source from step 1, each building the state a real
@@ -142,15 +179,68 @@ if problem := termsafe.TerminalProblem(out.String()); problem != "" {
 Before trusting either test, see it fail: point the conversion at the raw
 string once and run it.
 
+Both tests iterate over `termsafe.Samples()`, so a new version of the module
+that adds a sample runs it through the program without a change to the
+tests.
+
 A third kind of test is worth its fixtures: capture what the real tools
 print with the program's own arguments, into a file, and replay the bytes
 through the reader, the parser and the view. It is how glip found that
 yt-dlp's progress never reached its progress bar.
 
+## A repository that vendors
+
+After `go get`, run `go mod vendor` and commit `go.mod`, `go.sum`,
+`vendor/modules.txt` and
+`vendor/forgejo.kube.internal.conn3r.xyz/connerlab/termsafe/` together.
+
+- Only `go get` and `go mod vendor` need the Forgejo. Builds, tests and CI
+  read `vendor/` and need neither the network nor `GOPRIVATE`.
+- `go mod vendor` copies `termsafe.go`, `inspect.go` and `testkit.go`, so
+  the program's two tests build from the vendored copy, kit included.
+- It leaves out the package's own tests. The vendored copy cannot be tested
+  in place; the tests run in the termsafe repository.
+- It also copies the files that lie beside the package: the Markdown, the CI
+  file, `renovate.json`. They do nothing there. `CLAUDE.md` among them is
+  about working on termsafe, not on the program.
+- Never edit the vendored copy. Fix termsafe, tag it, and take the tag.
+
+## A repository that builds with Nix
+
+With `vendorHash = null` and a committed `vendor/`, as glip is built in
+nix-pkgs, the Nix expression does not change. Vendor as above.
+
+With a pinned `vendorHash`, `buildGoModule` builds the vendor directory
+itself: a fixed-output derivation runs `go mod vendor` with nixpkgs' git and
+nixpkgs' bundle of public certificate authorities. Two things change.
+
+1. The hash. Set `vendorHash = lib.fakeHash`, build, and paste the `got:`
+   hash, as after any change to `go.sum`.
+2. That derivation now has to download termsafe from the Forgejo. Expect it
+   to fail as it stands: the bundle does not hold the connerlabPKI root, and
+   the public proxy does not have the module. As of v0.1.0 nobody has run
+   this build, so the failure is read from `buildGoModule`'s source, not
+   seen.
+
+Three ways to deal with the second point, the first two already in use in
+these repositories:
+
+- Commit `vendor/` and set `vendorHash = null`. This is what glip does.
+- Take termsafe as a flake input (`flake = false`) pinned to the tag, and in
+  `postPatch` replace the module with that input, so `go mod vendor` copies
+  it from the Nix store and never asks the Forgejo. Triate's `flake.nix` does
+  this for the vigil module and has the working form, including why the
+  replace goes through a relative symlink. The version is then pinned twice,
+  in `go.mod` and in `flake.lock`; move both together.
+- Give the vendor derivation what it lacks through `overrideModAttrs`: a
+  certificate bundle that includes the connerlabPKI root, and `GOPRIVATE`.
+  The builder must also be able to reach the Forgejo. Untried.
+
 ## What termsafe does not do
 
 - It does not find a name written wholly in look-alike letters, or
   look-alikes within one script. That needs Unicode's confusables table.
+  `README.md` lists exactly what `MixedScripts` misses.
 - It does not clean what a child process writes to a terminal it was given.
 - It does not make text safe for anything but a terminal: not for a shell,
   HTML, a prompt or a file name.
