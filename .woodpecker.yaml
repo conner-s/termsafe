@@ -21,6 +21,8 @@ steps:
     image: golang:1.27-bookworm
     commands:
       - go vet ./...
+      # The Windows half of the terminal check is compiled nowhere else.
+      - GOOS=windows GOARCH=amd64 go vet ./...
       - test -z "$(gofmt -l .)" || (echo "Not formatted. Run 'gofmt -w .'" && gofmt -l . && exit 1)
       # Standard library only: the module graph is this module and nothing else.
       - test "$(go list -m all)" = "forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
@@ -28,12 +30,25 @@ steps:
   test:
     image: golang:1.27-bookworm
     commands:
+      # Which Unicode version this Go release carries, for the log.
+      - go test -run '^TestUnicodeVersion$' -v .
       # The profile goes outside the tree, so the repository needs no .gitignore
       # for go mod vendor to copy into every program that imports it.
       - go test -race -coverprofile=/tmp/coverage.out ./...
       # Every statement of the package is covered, and stays so.
       - go tool cover -func=/tmp/coverage.out | tail -1
       - go tool cover -func=/tmp/coverage.out | tail -1 | grep -q '100.0%'
+
+  # The same tests on the Go release of go.mod's go directive. Its Unicode
+  # tables are older (15.0, where 1.27 has 17.0), and what counts as a letter,
+  # a symbol or an ideograph comes from them. Programs built with that release
+  # get this behaviour. The image moves when the go directive moves, not
+  # before: renovate.json holds it.
+  test-oldest-go:
+    image: golang:1.26-bookworm
+    commands:
+      - go test -run '^TestUnicodeVersion$' -v .
+      - go test -race ./...
 
   fuzz:
     image: golang:1.27-bookworm
