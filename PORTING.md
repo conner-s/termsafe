@@ -2,7 +2,7 @@
 
 termsafe is one Go package in its own module, with no dependencies. This
 page says how to add it to a program, the method for finding every place it
-is needed, the two tests that prove the result, and what a repository that
+is needed, the tests that prove the result, and what a repository that
 vendors or builds with Nix has to do as well.
 
 glip is the worked example. `docs/untrusted-text.md` in that repository is
@@ -24,9 +24,14 @@ both.
 
 The Forgejo is not on the internet, so the public module proxy and checksum
 database cannot see it. `GOPRIVATE` makes Go skip them and fetch with git
-from the Forgejo itself. Go asks the Forgejo over HTTPS where the repository
-is, so the machine has to trust the connerlabPKI root certificate. Where git
-should then clone over ssh, put a rewrite in the environment of the command:
+from the Forgejo itself. Without it the go command sends the module's path
+to proxy.golang.org first and to sum.golang.org to check the download, and
+the second fails. Both were seen with the two services pointed at a dead
+local port. Go asks the Forgejo over HTTPS where the repository
+is, so the machine has to trust the connerlabPKI root certificate. The
+repository is public, so git can clone it over HTTPS without a login where
+git trusts that certificate too. Where git should clone over ssh instead, put
+a rewrite in the environment of the command:
 
 ```sh
 export GIT_CONFIG_COUNT=1
@@ -39,7 +44,7 @@ A program that carries a copy of the package from before it was a module
 Nothing else changes. v0.1.0 has the API and the behaviour of that copy.
 
 To take a later version, read `CHANGELOG.md` for it, `go get` the tag, and
-run the two tests below. A release that removes more than the one before can
+run the tests below. A release that removes more than the one before can
 change what a test of yours expects to see drawn.
 
 ## The method
@@ -134,10 +139,32 @@ A `Text` is for the screen. `Text.String()` is not the original.
 If the user's own input is cleaned and then used (a URL), tell the user:
 that is what the report is for.
 
-## The two tests
+### 6. Ask about the terminal, once
 
-Write both in the program, with the kit the package exports: `Samples`,
-`SampleMarker`, `ViewProblem` and `TerminalProblem`. Copy glip's
+Everything a `Text` promises is true on a terminal that decodes UTF-8. On
+any other, the bytes of ordinary characters are controls, and only ASCII is
+safe. `README.md` has the reasons under "Terminals that are not UTF-8".
+
+- At start, call `termsafe.CheckTerminal` with the file the program draws
+  on, and keep the result where the conversions of step 3 can reach it.
+- At each conversion, pass the cleaned text through it:
+  `terminal.Fit(termsafe.Drop.Line(raw))`. On a UTF-8 terminal that is the
+  text itself. On any other it is the ASCII form, `caf<U+00E9>`.
+- Give the user a way to overrule the verdict in both directions, a flag or
+  a setting, and build the `Terminal` from it:
+  `termsafe.Terminal{Encoding: termsafe.EncodingUTF8}`. The check reads the
+  locale; it cannot see how the terminal emulator is set.
+- When the verdict is not UTF-8, say so once, with `terminal.Reason`, and
+  say how to overrule it.
+- Give the program's own glyphs ASCII stand-ins for that case: borders,
+  bullets, spinners, progress bars. Their bytes are read the same way.
+- Truncate after `Fit`: in the ASCII form one character is one column.
+  Run `MixedScripts` before it.
+
+## The tests
+
+Write them in the program, with the kit the package exports: `Samples`,
+`SampleMarker`, `ViewProblem`, `TerminalProblem` and `ASCIIProblem`. Copy glip's
 `ui/hostile_test.go` and replace its table of entries with the program's own.
 
 1. **The view test.** Make a table of every way outside text gets into the
@@ -176,10 +203,19 @@ if problem := termsafe.TerminalProblem(out.String()); problem != "" {
 }
 ```
 
-Before trusting either test, see it fail: point the conversion at the raw
-string once and run it.
+3. **The same two, for a terminal that is not UTF-8.** Build the program's
+   state with `termsafe.Terminal{Encoding: termsafe.EncodingNotUTF8}` in
+   place of the check's result, and run both tests again. Besides
+   `ViewProblem` and `TerminalProblem`, require
+   `termsafe.ASCIIProblem(view) == ""` and
+   `termsafe.ASCIIProblem(written) == ""`: not one byte outside ASCII, in
+   the outside text or in the program's own drawing. This is the test that
+   finds the border or the spinner that was left as it was.
 
-Both tests iterate over `termsafe.Samples()`, so a new version of the module
+Before trusting any of them, see it fail: point the conversion at the raw
+string once and run it. For the third, leave out one `Fit`.
+
+All of them iterate over `termsafe.Samples()`, so a new version of the module
 that adds a sample runs it through the program without a change to the
 tests.
 
@@ -200,9 +236,14 @@ After `go get`, run `go mod vendor` and commit `go.mod`, `go.sum`,
   the program's two tests build from the vendored copy, kit included.
 - It leaves out the package's own tests. The vendored copy cannot be tested
   in place; the tests run in the termsafe repository.
-- It also copies the files that lie beside the package: the Markdown, the CI
-  file, `renovate.json`. They do nothing there. `CLAUDE.md` among them is
-  about working on termsafe, not on the program.
+- It also copies the files that lie beside the package: `README.md`,
+  `PORTING.md`, `CHANGELOG.md`, `LICENSE`, the CI file and `renovate.json`.
+  The first four belong next to vendored code. The last two do nothing
+  there: Woodpecker and Renovate read their files at the root of a
+  repository only, and Renovate's own list of the files it found in glip
+  shows it passing over a vendored CI file. Nothing from a subdirectory is
+  copied, which is why termsafe keeps its instructions for agents in
+  `.claude/` and its test data in `testdata/`.
 - Never edit the vendored copy. Fix termsafe, tag it, and take the tag.
 
 ## A repository that builds with Nix
@@ -218,9 +259,13 @@ nixpkgs' bundle of public certificate authorities. Two things change.
    hash, as after any change to `go.sum`.
 2. That derivation now has to download termsafe from the Forgejo. Expect it
    to fail as it stands: the bundle does not hold the connerlabPKI root, and
-   the public proxy does not have the module. As of v0.1.0 nobody has run
-   this build, so the failure is read from `buildGoModule`'s source, not
-   seen.
+   the public proxy does not have the module. Two halves of that have been
+   seen. git, given only that bundle the way `buildGoModule` gives it,
+   refuses the Forgejo's certificate ("unable to get local issuer
+   certificate"). And Go in Renovate's container, which has the public
+   authorities only, fails on another module of this Forgejo with "x509:
+   certificate signed by unknown authority". The Nix build itself has not
+   been run.
 
 Three ways to deal with the second point, the first two already in use in
 these repositories:
