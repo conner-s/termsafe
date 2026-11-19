@@ -2,6 +2,7 @@ package termsafe_test
 
 import (
 	"fmt"
+	"os"
 
 	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 )
@@ -11,6 +12,7 @@ import (
 const (
 	rightToLeftOverride = string(rune(0x202E))
 	greekUpsilon        = string(rune(0x03C5)) // looks like u
+	eAcute              = string(rune(0x00E9))
 )
 
 // hostileName is a file name a remote site chose: a right-to-left override
@@ -54,6 +56,40 @@ func ExamplePolicy_Clean() {
 	// 10%
 	// 20%
 	// done
+}
+
+func ExampleText_ASCII() {
+	title := termsafe.Drop.Line("caf" + eAcute + " " + hostileName)
+	fmt.Println(title.ASCII())
+
+	// Output:
+	// caf<U+00E9> invoicefdp.exe
+}
+
+func ExampleTerminal_Fit() {
+	// At start a program asks once: terminal := termsafe.CheckTerminal(os.Stdout).
+	// Here the answer is made up, as if LANG were C.
+	terminal := termsafe.Terminal{Encoding: termsafe.EncodingNotUTF8}
+
+	title := termsafe.Drop.Line("caf" + eAcute)
+	drawTitle(terminal.Fit(title))
+	if terminal.Encoding != termsafe.EncodingUTF8 {
+		fmt.Println("the terminal is", terminal.Encoding)
+	}
+
+	// Output:
+	// caf<U+00E9>
+	// the terminal is not UTF-8
+}
+
+func ExampleCheckTerminal() {
+	terminal := termsafe.CheckTerminal(os.Stdout)
+	if terminal.Encoding != termsafe.EncodingUTF8 {
+		// Say it once, in ASCII: Reason and Evidence are.
+		fmt.Fprintln(os.Stderr, "drawing ASCII only:", terminal.Reason)
+	}
+	// terminal.Evidence lists everything the check looked at, for a verbose
+	// mode or a diagnostics screen.
 }
 
 func ExampleText_MixedScripts() {

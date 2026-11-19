@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -272,8 +273,11 @@ func TestText_Truncate(t *testing.T) {
 
 // firstUnsafe returns the first rune of s that must never reach a terminal:
 // a C0 control (newline and tab excepted unless oneLine), DEL, a C1 control,
-// or a byte that is not valid UTF-8.
+// a byte that is not valid UTF-8, a line or paragraph separator, or a
+// variation selector that does not stand directly after a character it can
+// modify.
 func firstUnsafe(s string, oneLine bool) (rune, bool) {
+	var before rune
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		switch {
@@ -285,8 +289,30 @@ func firstUnsafe(s string, oneLine bool) (rune, bool) {
 			}
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			return r, true
+		case r == 0x2028 || r == 0x2029:
+			return r, true
+		case unicode.Is(unicode.Variation_Selector, r):
+			if unicode.Is(unicode.Variation_Selector, before) || !takesSelector(before, r) {
+				return r, true
+			}
 		}
+		before = r
 		i += size
+	}
+	return 0, false
+}
+
+// firstNotASCII returns the first byte of s that is not printable ASCII.
+// Newline and tab pass unless oneLine.
+func firstNotASCII(s string, oneLine bool) (byte, bool) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c == '\n' || c == '\t') && !oneLine {
+			continue
+		}
+		if c < 0x20 || c > 0x7e {
+			return c, true
+		}
 	}
 	return 0, false
 }
@@ -328,6 +354,42 @@ func checkInvariants(t *testing.T, in string) {
 	} else if r, bad := firstUnsafe(got, false); bad {
 		t.Fatalf("Truncate of Drop.Clean(%q) = %q holds %U", in, got, r)
 	}
+
+	// The ASCII form of anything cleaned is printable ASCII and nothing
+	// else, it is its own ASCII form, and there is nothing left in it to
+	// clean.
+	for name, policy := range map[string]Policy{"Drop": Drop, "Mark": Mark} {
+		for _, oneLine := range []bool{false, true} {
+			text := policy.Clean(in)
+			if oneLine {
+				text = policy.Line(in)
+			}
+			ascii := text.ASCII()
+			if c, bad := firstNotASCII(ascii.String(), oneLine); bad {
+				t.Fatalf("%s, one line %v: ASCII of %+q = %q holds the byte %#x", name, oneLine, in, ascii.String(), c)
+			}
+			if again := ascii.ASCII(); again != ascii {
+				t.Fatalf("ASCII is not idempotent on %+q: %q then %q", in, ascii.String(), again.String())
+			}
+			for _, again := range []Policy{Drop, Mark} {
+				if recleaned, rep := again.CleanReport(ascii.String()); rep.Changed() || recleaned != ascii {
+					t.Fatalf("%s: the ASCII form %q of %+q still has something to clean: %+v", name, ascii.String(), in, rep)
+				}
+			}
+			if (text.String() == ascii.String()) != isASCII(text.String()) {
+				t.Fatalf("ASCII changed %+q into %q", text.String(), ascii.String())
+			}
+		}
+	}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func TestInvariants_Table(t *testing.T) {
@@ -349,6 +411,11 @@ var fragments = []string{
 	rlo, rli, pdi, lrm, zwsp, zwj, zwnj, bom, shy, vs16,
 	string(rune(0x1F3F4)), string(rune(0xE0067)), string(rune(0xE007F)),
 	string(rune(0x1F469)), string(rune(0x0645)), string(rune(0x0915)), string(rune(0x094D)), string(rune(0x0430)),
+	// variation selectors of every kind, characters they belong after, and
+	// the line breaks that are not a newline
+	vs1Str, vs2Str, vs4Str, vs8Str, vs15, vs17, vs256, fvs1,
+	heart, hanKatsu, mongolianA, hieroglyph, intersect, ideoComma, "0", "#",
+	lineSep, paraSep,
 }
 
 // TestInvariants_Random builds inputs from fragments with a fixed seed, so a
@@ -383,6 +450,15 @@ func TestInvariants_Random(t *testing.T) {
 func FuzzClean(f *testing.F) {
 	for _, tc := range cleanCases {
 		f.Add(tc.in)
+	}
+	for _, tc := range formatCases {
+		f.Add(tc.in)
+	}
+	for _, tc := range strayCases {
+		f.Add(tc.in)
+	}
+	for _, s := range Samples() {
+		f.Add(s.Text)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
 		checkInvariants(t, in)
@@ -468,7 +544,7 @@ func TestReport_String(t *testing.T) {
 // nothing but white space changed, and something reported means the text did
 // change.
 func TestReport_Invariants(t *testing.T) {
-	whitespace := strings.NewReplacer("\r\n", "\n", "\r", "\n")
+	whitespace := strings.NewReplacer("\r\n", "\n", "\r", "\n", lineSep, "\n", paraSep, "\n")
 	rng := rand.New(rand.NewSource(2))
 	for i := 0; i < 20000; i++ {
 		var b strings.Builder
@@ -495,6 +571,8 @@ func TestCleanInputAllocatesNothing(t *testing.T) {
 		"Drop.Line":        func() { sink = Drop.Line(in) },
 		"Drop.CleanReport": func() { sink, rep = Drop.CleanReport(in) },
 		"Mark.LineReport":  func() { sink, rep = Mark.LineReport(in) },
+		"Drop.Line, ASCII": func() { sink = Drop.Line(in).ASCII() },
+		"Terminal.Fit":     func() { sink = Terminal{}.Fit(Mark.Clean(in)) },
 	} {
 		if n := testing.AllocsPerRun(100, fn); n != 0 {
 			t.Errorf("%s allocates %v times on clean input", name, n)

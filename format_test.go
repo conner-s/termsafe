@@ -311,7 +311,7 @@ func TestNoFormatCharacterSurvives(t *testing.T) {
 		if r >= 0xD800 && r <= 0xDFFF {
 			continue
 		}
-		if !isBidiControl(r) && !isInvisible(r, 'a', false) {
+		if !isBidiControl(r) && !isInvisible(r, 'a', 'a', false) {
 			continue
 		}
 		in := "a" + string(r) + "b"

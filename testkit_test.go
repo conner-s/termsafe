@@ -35,11 +35,31 @@ func TestKit_RawSamplesFail(t *testing.T) {
 	// What reaches the terminal when a view is not cleaned depends on the
 	// renderer; the check itself must see each of these.
 	for _, s := range Samples() {
-		if s.Name == "csi erase and home" || s.Name == "joiner between Latin letters" {
-			continue // a renderer's own CSI cannot be told apart; joiners are judged in the view
+		switch s.Name {
+		case "csi erase and home", "joiner between Latin letters", "variation selector after a Latin letter":
+			// A renderer's own CSI cannot be told apart. A joiner or a
+			// single selector is right or wrong by what it follows,
+			// which is judged in the view.
+			continue
 		}
 		if p := TerminalProblem(s.Text); p == "" {
 			t.Errorf("sample %q: TerminalProblem finds nothing wrong with the raw text", s.Name)
+		}
+	}
+}
+
+func TestKit_TerminalProblems(t *testing.T) {
+	emoji := SampleMarker + heart + vs16 // an emoji with its selector
+	for written, want := range map[string]string{
+		SampleMarker + " plain": "",
+		emoji:                   "",
+		SampleMarker + lineSep:  "line break U+2028",
+		SampleMarker + paraSep:  "line break U+2029",
+		emoji + vs16:            "run of variation selectors",
+	} {
+		got := TerminalProblem("\x1b[?1049h" + written + "\x1b[?1049l")
+		if (want == "") != (got == "") || !strings.Contains(got, want) {
+			t.Errorf("TerminalProblem(%+q) = %q, want it to mention %q", written, got, want)
 		}
 	}
 }
@@ -53,18 +73,45 @@ func TestKit_NothingDrawn(t *testing.T) {
 	}
 }
 
+func TestKit_ASCIIProblem(t *testing.T) {
+	ownSequences := "\x1b[1;38;5;86mtitle\x1b[m\x1b[2K\r" // a renderer's own, all ASCII
+	for written, want := range map[string]string{
+		"":                                "",
+		SampleMarker + " plain\n\ttext":   "",
+		ownSequences:                      "",
+		"caf" + u(0x00E9):                 "U+00E9",
+		"a bullet " + u(0x2022):           "U+2022",
+		"a raw byte \x9b":                 "the byte 0x9B",
+		"half a character \xc3":           "the byte 0xC3",
+		"a replacement char " + u(0xFFFD): "U+FFFD",
+	} {
+		got := ASCIIProblem(written)
+		if (want == "") != (got == "") || !strings.Contains(got, want) {
+			t.Errorf("ASCIIProblem(%+q) = %q, want it to mention %q", written, got, want)
+		}
+	}
+}
+
 func TestKit_ViewProblems(t *testing.T) {
+	// An emoji with its selector, which is legitimate, and the same with a
+	// second selector after it.
+	emoji := SampleMarker + heart + vs16
 	for view, want := range map[string]string{
-		SampleMarker + " plain":                   "",
-		SampleMarker + "\x1b[1mbold\x1b[0m":       "",
-		SampleMarker + "\xffnext":                 "1 invalid byte",
-		SampleMarker + " +q" + samplePayload:      "payload",
-		SampleMarker + "\x1b[38;5;201mcoloured":   "colour sequence",
-		SampleMarker + "\x1b[2J":                  "control character U+001B",
-		SampleMarker + "\rnext":                   "control character U+000D",
-		SampleMarker + string(rune(0x202e)):       "bidirectional control U+202E",
-		SampleMarker + string(rune(0x200b)):       "invisible character U+200B",
-		SampleMarker + "a" + string(rune(0x200d)): "1 invisible character",
+		SampleMarker + " plain":                 "",
+		SampleMarker + "\x1b[1mbold\x1b[0m":     "",
+		SampleMarker + "\xffnext":               "1 invalid byte",
+		SampleMarker + " +q" + samplePayload:    "payload",
+		SampleMarker + "\x1b[38;5;201mcoloured": "colour sequence",
+		SampleMarker + "\x1b[2J":                "control character U+001B",
+		SampleMarker + "\rnext":                 "control character U+000D",
+		SampleMarker + rlo:                      "bidirectional control U+202E",
+		SampleMarker + zwsp:                     "invisible character U+200B",
+		SampleMarker + "a" + zwj:                "1 invisible character",
+		SampleMarker + lineSep:                  "line break U+2028",
+		SampleMarker + paraSep:                  "line break U+2029",
+		SampleMarker + vs16:                     "1 invisible character",
+		emoji:                                   "",
+		emoji + vs17:                            "run of variation selectors, U+E0100 after U+FE0F",
 	} {
 		got := ViewProblem(view)
 		if (want == "") != (got == "") || !strings.Contains(got, want) {
