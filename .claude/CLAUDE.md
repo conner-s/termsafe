@@ -12,7 +12,9 @@ Every change keeps these five.
 - Standard library only. `go.mod` has no `require`; CI checks that the module graph is this module alone.
 - Clean ASCII input allocates nothing, through `clean`, `Text.ASCII` and `Terminal.Fit`. `TestCleanInputAllocatesNothing` holds it there.
 
-Coverage of the package stays at 100% of statements. CI fails below that. `terminal_windows.go` is compiled only for Windows, where no test runs: keep it to the two calls it makes, and put every decision in `judge`, which is tested everywhere.
+Coverage of the package stays at 100% of statements. CI fails below that, and CI is Linux. Code that only a real terminal reaches would break it, so `probe_unix.go` asks the system in straight lines and leaves every decision to `refusal` and `ask`, which scripted terminals reach on any platform.
+
+Nothing here has run on Windows. `terminal_windows.go` only gathers facts with system calls; every decision is in `judge`, which is tested everywhere with the facts written out. Keep it that way, and say "compiled and vetted", never "tested", about Windows.
 
 ## Changing behaviour
 
@@ -24,11 +26,13 @@ A change to what cleaning removes, marks or keeps comes with all three:
 
 ## Unicode tables
 
-What is a letter, a symbol, an ideograph or a format character comes from the `unicode` package, so it depends on the Go release: Unicode 15.0 in Go 1.26, 17.0 in Go 1.27. CI runs the tests on both. A test that needs a character added after 15.0 skips it when the tables do not know it, as `TestSelectorsAgainstUnicodeData` does. When the package comment quotes numbers about the tables, recount them before changing them.
+What is a letter, a symbol, an ideograph or a format character comes from the `unicode` package, so it depends on the Go release: Unicode 15.0 in Go 1.26, 17.0 in Go 1.27. CI runs the tests on both. A test that needs a character added after 15.0 skips it when the tables do not know it, as `TestSelectorClasses` does. When the package comment quotes numbers about the tables, recount them before changing them.
+
+Unicode's data files are not kept in this repository. After a change to `takesSelector`, and when a Go release brings a new Unicode version, run `scripts/unicode-data.sh`: it fetches the lists of variation sequences and checks every one. The ordinary tests only check the table of kinds in `selector_test.go`.
 
 ## Layout
 
-`go mod vendor` copies every file that lies beside the package into each program that imports it, and nothing from subdirectories. So this file is in `.claude/` and the Unicode data in `testdata/`. `README.md`, `PORTING.md`, `CHANGELOG.md` and `LICENSE` are at the root because a program wants them next to the vendored code. Put anything else in a subdirectory.
+`go mod vendor` copies every file that lies beside the package into each program that imports it, and nothing from subdirectories. So this file is in `.claude/` and the maintainer's script in `scripts/`. `README.md`, `PORTING.md`, `CHANGELOG.md` and `LICENSE` are at the root because a program wants them next to the vendored code. Put anything else in a subdirectory.
 
 ## Conventions
 
