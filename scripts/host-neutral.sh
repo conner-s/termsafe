@@ -20,6 +20,13 @@ set -eu
 private_ip='(^|[^0-9.])(10\.[0-9]{1,3}|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}([^0-9.]|$)'
 private_host='[a-z0-9-]+\.(internal|lan|home\.arpa)(\.[a-z0-9-]+)*([^a-z0-9.-]|$)'
 
+# A check that lists nothing finds nothing: outside a work tree, or where git
+# refuses the directory, say so instead of passing.
+if [ "$(git ls-files | wc -l)" -eq 0 ]; then
+  echo "host-neutral: git lists no tracked files here; run it from the repository root" >&2
+  exit 1
+fi
+
 # -I skips binary files; the script's own patterns are not hostnames.
 found=$(git ls-files -z -- . ':!scripts/host-neutral.sh' \
   | xargs -0 grep -InE -e "$private_ip" -e "$private_host" -- 2>/dev/null || true)
