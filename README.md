@@ -19,8 +19,37 @@ for a terminal it cannot vouch for.
 It is one Go package with no dependencies outside the standard library.
 
 ```go
-import "forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+import "github.com/conner-s/termsafe"
 ```
+
+```sh
+go get github.com/conner-s/termsafe
+```
+
+Fetching it takes no credentials, no extra certificate authority and no
+`GOPRIVATE`: Go gets it through the public module proxy and checks it against
+the public checksum database, like any other module.
+
+**The GitHub repository is a read-only mirror.** termsafe is developed on
+its owner's own forge, which is not reachable from outside: the commits,
+the issues, the pull requests and the CI that gates them are there, and the
+forge pushes `main` to GitHub. If you are reading this on GitHub:
+
+- A pull request opened on GitHub will not be merged there, and the next
+  push from the forge would not include it.
+- There is no public place to report a problem yet. Contact: none yet.
+- The "Mirror" workflow on GitHub runs after each push from the forge. It is
+  where the package is tested on Windows and macOS.
+
+Version 0.1.0 was published under another path,
+`forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`, on that forge. The
+first version under this path is v0.2.0; a program that used v0.1.0 changes
+its import path and nothing else, apart from what CHANGELOG.md lists for
+v0.2.0. The mirror may show a tag `v0.1.0` all the same, because the forge
+has it. Its `go.mod` declares the old path, so
+`go get github.com/conner-s/termsafe@v0.1.0` fails with a complaint about
+the module path. That is expected: v0.2.0 is the first version that
+resolves.
 
 `go doc` on the package lists every sequence and character it handles.
 [PORTING.md](PORTING.md) says how to put it into a program.
@@ -360,15 +389,6 @@ program has three things to do, and a fourth it may add.
    done unless the program calls it. [Asking the terminal](#asking-the-terminal)
    has the conditions.
 
-One thing for the people who build the program, not for the program: set
-`GOPRIVATE=forgejo.kube.internal.conn3r.xyz` on developer machines and in dev
-shells. The module lives on a Forgejo the public Go services cannot see.
-Without the variable, any `go` command that touches the network (`go get`,
-`go mod tidy`, a first build) sends the module's path to proxy.golang.org
-before it tries the Forgejo, and to sum.golang.org after a direct download,
-where the check then fails. [PORTING.md](PORTING.md) has the rest, for
-vendoring and for Nix.
-
 Run `Text.MixedScripts` before the ASCII form, which has no letters of other
 scripts left in it. `Mixed.String()` draws the word as it stands, so on such
 a terminal show `Word.ASCII()` and the code points in `Odd`.
@@ -448,8 +468,8 @@ writes to the console handle some other way is not covered by it.
 The whole table is one function, `judge`, which is given the facts and makes
 no system call. It is tested on every platform, with the facts for each row
 written out. The part that gathers the facts on Windows, four system calls in
-`terminal_windows.go`, has never run: see
-[What was tested](#what-was-tested-and-what-was-not).
+`terminal_windows.go`, runs only in the Windows job on the mirror: see
+[What was tested](#what-was-tested-and-what-was-not) for how far that goes.
 
 ### Asking the terminal
 
@@ -544,13 +564,26 @@ rule (categories So and Sm, the unified ideographs, and five scripts),
 and Cyrillic scripts). The control sequences, the control characters, the
 ASCII form and the terminal check depend on none.
 
-`TestUnicodeVersion` prints the version it ran under, and CI runs the tests
-on both Go releases, so the log shows both.
+`TestUnicodeVersion` prints the version it ran under, and both CIs run the
+tests on both Go releases, so the logs show both. Go 1.26 stays in them until
+Go 1.28 is released, when it leaves Go's support.
 
 ## What was tested, and what was not
 
-Tested in this repository, by CI on every push to `main` and every pull
-request:
+Tested in this repository, in two places.
+
+Before a merge, on the forge: a Woodpecker pipeline on every pull request
+and every push to `main`, on Linux, with Go 1.27 and with Go 1.26.
+Everything in the list below runs there, and a pull request does not merge
+without it.
+
+After a merge, on the GitHub mirror: the "Mirror" workflow, on what the
+forge pushed. It has the runners the forge lacks: a Windows job, a macOS
+job, and a Linux job that repeats the pipeline's checks. **It runs after the
+merge, not before it.** A failure there, a Windows failure most likely,
+shows up on a `main` that already holds the change. Then: treat it as a bug
+on `main`, fix it or revert it through a pull request on the forge, and tag
+no release from a commit whose mirror run is not green.
 
 - Tables of hostile input with the exact output expected: CSI, OSC, DCS,
   APC, PM and SOS in their ESC and C1 forms, terminated and not, cut by a
@@ -593,7 +626,8 @@ request:
   pipes with real deadlines, and over a pseudo terminal, where the kernel's
   terminal driver sits between the probe and the scripted terminal: in raw
   mode it asks, in the mode a shell leaves it asks nothing.
-- Statement coverage of the package is 100% and CI fails below that.
+- Statement coverage of the package is 100%, and the pipeline fails below
+  that.
 
 Tested in the programs that use it, not here:
 
@@ -614,35 +648,45 @@ Not tested:
   right-to-left text termsafe leaves alone.
 - Speed, beyond the one test that clean ASCII allocates nothing. Cleaning is
   one pass over the string.
-- **Windows. Nothing of this package has run on Windows, or on anything
-  that stands in for it.** CI is Linux and development is on macOS. The
-  Windows build is compiled and passes `go vet`, on every push, and that is
-  all. Read no more into it.
-  - Running the Windows build under Wine was tried and could not be done:
-    nixpkgs has no Wine for an Apple Silicon Mac (`wine64` is built for
-    x86_64-linux, x86_64-darwin and aarch64-linux), and its x86_64-darwin
-    build cannot start here, because this Mac has no Rosetta. Whether it
-    would work in the Linux CI is not known; nothing here can run a Linux
-    container to find out. It would also show less than it seems to: under
-    Wine in CI the output is a pipe, so the console rows would still not
-    run.
-  - What that leaves untested is small and named: the four system calls in
-    `terminal_windows.go` that gather the facts, and the claim, read in
-    Go's source, that an `*os.File` writes to a console in UTF-16. The
-    decision made from the facts is tested everywhere.
-  - `terminal_windows_test.go` holds the tests that would turn both into
-    evidence. `TestWindowsConsoleReceivesCharacters` sets the console to
-    code page 437, writes three characters through an `*os.File` and reads
-    the cells back from the screen buffer. They have never run either. On a
-    Windows machine, from a console window: `go test -run Windows -v .`
+- **Windows, beyond what a CI runner can show.** Development is on macOS and
+  the forge's CI is Linux. The Windows half of this package runs in one
+  place, the Windows job of the mirror's workflow, after a merge. That job
+  runs the whole suite and then the two tests written for Windows, and its
+  last step says for each of the two whether it ran and passed, or skipped.
+  Read its summary before reading "passed" into a green job.
+  - `TestWindowsExamineOutput` needs no console. It looks at a pipe, a file
+    and `NUL`, and can run on a runner.
+  - `TestWindowsConsoleReceivesCharacters` is the evidence for the console
+    rows of the table: it sets the console to code page 437, writes three
+    characters through an `*os.File` and reads the cells back from the
+    screen buffer. A runner has no console window. The test takes the
+    console its process was given, asks Windows for one if it has none, and
+    skips itself only if both fail; the job then says "NOT RUN, SKIPPED" and
+    raises a warning. Either way it has not run in a real console window,
+    Windows Terminal or the classic one. On a Windows machine:
+    `go test -run Windows -v .`
+  - Not covered by any of this: mintty and Git Bash, where the output is a
+    pty that Windows presents as a pipe. That row is tested as a decision,
+    with the facts written out, and never against the real thing.
+  - Running the Windows build under Wine was tried on the development
+    machine and could not be done: nixpkgs has no Wine for an Apple Silicon
+    Mac, and its x86_64 build cannot start without Rosetta.
+  - The workflow was written on 2026-11-19 and had not run when this was
+    written. Its first run is the first time any of this code runs on
+    Windows, and the Windows tests themselves were written without a
+    Windows machine: a failure there may be the test's.
 - The terminal check against real terminals in other encodings. Its table
   is what locales say, not what any terminal did.
-- The probe against a real terminal emulator. Its terminals are scripted,
-  and the pseudo terminal test has run on macOS only: on Linux it runs for
-  the first time in CI. The probe's Linux constants for the terminal mode
-  are from the kernel's headers for amd64 and arm64, not from a run.
-- Nobody outside the project has reviewed it. The owner reviewed it in
-  connerlab/glip#12, where it was written.
+- The probe against a real terminal emulator. Its terminals are scripted.
+  The pseudo terminal test runs on Linux in both CIs and on macOS in the
+  mirror's workflow, whose jobs fail if that test skipped itself. In the
+  forge's pipeline a skip does not fail the run. Before the first of those
+  runs it had run on macOS only, and the probe's Linux constants for the
+  terminal mode are from the kernel's headers for amd64 and arm64, not from
+  a run.
+- Nobody outside the project has reviewed it. Its author's own review
+  happened in the program it was written in, glip, before it became a
+  module.
 
 ## Stability
 
@@ -669,13 +713,25 @@ The module is at v0. What that means here:
 
 ## Releases
 
-A release is an annotated git tag `vMAJOR.MINOR.PATCH` on a commit of `main`
-that CI passed, made after CHANGELOG.md has a section for that version. Go
-fetches the tag from this repository, so there is nothing to publish.
+A release is made on the forge and has to reach GitHub, because GitHub is
+where Go fetches it from.
 
-A tag is never moved or deleted. Programs record a version's checksum in
-their `go.sum`, and a moved tag breaks their builds. A bad release gets a
-new patch release, and a `retract` line in `go.mod` if nobody should use it.
+1. CHANGELOG.md has a section for the version, on `main`.
+2. The commit passed the forge's pipeline, and the mirror's workflow run for
+   that commit is green.
+3. An annotated tag `vMAJOR.MINOR.PATCH` goes on that commit, on the forge.
+4. Confirm the tag is on GitHub. The forge mirrors `main`; whether it
+   carries tags too is a setting, so look rather than assume, and push the
+   tag there if it is missing:
+   `git ls-remote --tags https://github.com/conner-s/termsafe`
+5. Confirm Go resolves it: `go list -m github.com/conner-s/termsafe@vX.Y.Z`
+   from outside any module.
+
+A tag is never moved or deleted. The module proxy and the checksum database
+keep the first contents they saw for a version, for good, and programs
+record the checksum in their `go.sum`: a moved tag would differ from all
+three. A bad release gets a new patch release, and a `retract` line in
+`go.mod` if nobody should use it.
 
 ## Licence
 
