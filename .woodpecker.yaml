@@ -1,0 +1,41 @@
+# Woodpecker CI for termsafe, a Go module with no dependencies.
+#
+# Runs on pushes to main, on pull requests and when started by hand.
+# There is no publish step: Go fetches a tagged version from the repository.
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+  - event: manual
+
+# Custom clone step to use the custom SSL certificate for Forgejo
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      custom-ssl-path: /var/run/autocert.step.sm/root.crt
+
+steps:
+  lint:
+    image: golang:1.27-bookworm
+    commands:
+      - go vet ./...
+      - test -z "$(gofmt -l .)" || (echo "Not formatted. Run 'gofmt -w .'" && gofmt -l . && exit 1)
+      # Standard library only: the module graph is this module and nothing else.
+      - test "$(go list -m all)" = "forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+
+  test:
+    image: golang:1.27-bookworm
+    commands:
+      # The profile goes outside the tree, so the repository needs no .gitignore
+      # for go mod vendor to copy into every program that imports it.
+      - go test -race -coverprofile=/tmp/coverage.out ./...
+      # Every statement of the package is covered, and stays so.
+      - go tool cover -func=/tmp/coverage.out | tail -1
+      - go tool cover -func=/tmp/coverage.out | tail -1 | grep -q '100.0%'
+
+  fuzz:
+    image: golang:1.27-bookworm
+    commands:
+      - go test -run='^$' -fuzz='^FuzzClean$' -fuzztime=30s .
