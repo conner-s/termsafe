@@ -80,6 +80,9 @@ jobs:
       - name: Standard library only
         run: test "$(go list -m all)" = "github.com/conner-s/termsafe"
 
+      - name: No private host or address in the tree
+        run: sh scripts/host-neutral.sh
+
       - name: Tests with the race detector, every statement covered
         run: |
           go test -race -coverprofile="$RUNNER_TEMP/coverage.out" ./...

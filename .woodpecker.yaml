@@ -31,6 +31,9 @@ steps:
       - test -z "$(gofmt -l .)" || (echo "Not formatted. Run 'gofmt -w .'" && gofmt -l . && exit 1)
       # Standard library only: the module graph is this module and nothing else.
       - test "$(go list -m all)" = "github.com/conner-s/termsafe"
+      # Nothing tracked names a private host or address: the mirror and every
+      # module zip are public.
+      - sh scripts/host-neutral.sh
 
   test:
     image: golang:1.27-bookworm

@@ -41,8 +41,7 @@ forge pushes `main` to GitHub. If you are reading this on GitHub:
 - The "Mirror" workflow on GitHub runs after each push from the forge. It is
   where the package is tested on Windows and macOS.
 
-Version 0.1.0 was published under another path,
-`forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`, on that forge. The
+Version 0.1.0 was published under another module path, on that forge. The
 first version under this path is v0.2.0; a program that used v0.1.0 changes
 its import path and nothing else, apart from what CHANGELOG.md lists for
 v0.2.0. The mirror may show a tag `v0.1.0` all the same, because the forge

@@ -15,12 +15,17 @@ exported is still there with the same signature.
 
 ### Changed
 
+- **The repository names no private host or address.** It is mirrored to a
+  public one, and a released version is a module zip the Go proxy keeps for
+  good. The history notes say "a private forge" without the hostname, test
+  fixtures use documentation addresses, and `scripts/host-neutral.sh` fails
+  the pipeline if a tracked file names one.
+  Who it affects: nobody who uses the package; contributors run the script.
 - **The module path changed; update imports.** The module is now
   `github.com/conner-s/termsafe`, so that a program using it builds
   anywhere without a private certificate authority. The repository on
   GitHub is a public, read-only mirror; development stays on the owner's
-  forge. v0.1.0 was published as
-  `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe` on that forge and
+  forge. v0.1.0 was published under a module path on that forge and
   does not resolve under the new path, even where the mirror shows its tag:
   v0.2.0 is the first version here.
   Who it affects: every program that used v0.1.0. Change the import path in
@@ -123,6 +128,6 @@ those of that copy.
 
 ### Changed
 
-- The import path, from a directory inside each program to
-  `forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`, on a private forge.
+- The import path, from a directory inside each program to a module path
+  on a private forge.
   That path ended with this version: see v0.2.0.
