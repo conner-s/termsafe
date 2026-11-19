@@ -150,6 +150,10 @@ safe. `README.md` has the reasons under "Terminals that are not UTF-8".
 - At each conversion, pass the cleaned text through it:
   `terminal.Fit(termsafe.Drop.Line(raw))`. On a UTF-8 terminal that is the
   text itself. On any other it is the ASCII form, `caf<U+00E9>`.
+- A program that owns the terminal may also ask it, before its TUI starts:
+  `terminal = terminal.Probe(os.Stdin, os.Stdout, timeout)`, with the
+  terminal in raw mode for that moment. `README.md`, "Asking the terminal",
+  has the code and the conditions. The answer outranks the environment.
 - Give the user a way to overrule the verdict in both directions, a flag or
   a setting, and build the `Terminal` from it:
   `termsafe.Terminal{Encoding: termsafe.EncodingUTF8}`. The check reads the
@@ -219,6 +223,16 @@ All of them iterate over `termsafe.Samples()`, so a new version of the module
 that adds a sample runs it through the program without a change to the
 tests.
 
+A view may show an escaped form on purpose: the TOML an encoder wrote, with
+an ESC as the six characters `\u001B`, or a name quoted with `%q`. The
+payload of a control string then stands after the escape as readable text,
+and `ViewProblem` reports "the payload of a control sequence is drawn as
+text", because from a cleaner that means half a sequence was removed. For
+such a view that picture is the intended one, but only when the escape is
+there to be read. Have the test allow exactly that finding, and only when
+the drawn text holds the visible escape, and nothing else. nfu's
+`hostile_test.go` has the helper.
+
 A third kind of test is worth its fixtures: capture what the real tools
 print with the program's own arguments, into a file, and replay the bytes
 through the reader, the parser and the view. It is how glip found that
@@ -243,43 +257,106 @@ After `go get`, run `go mod vendor` and commit `go.mod`, `go.sum`,
   repository only, and Renovate's own list of the files it found in glip
   shows it passing over a vendored CI file. Nothing from a subdirectory is
   copied, which is why termsafe keeps its instructions for agents in
-  `.claude/` and its test data in `testdata/`.
+  `.claude/` and its maintainer's script in `scripts/`.
 - Never edit the vendored copy. Fix termsafe, tag it, and take the tag.
 
 ## A repository that builds with Nix
 
 With `vendorHash = null` and a committed `vendor/`, as glip is built in
-nix-pkgs, the Nix expression does not change. Vendor as above.
+nix-pkgs, the Nix expression does not change. Vendor as above. Choose this
+where the program must build without reaching the Forgejo.
 
-With a pinned `vendorHash`, `buildGoModule` builds the vendor directory
-itself: a fixed-output derivation runs `go mod vendor` with nixpkgs' git and
-nixpkgs' bundle of public certificate authorities. Two things change.
+With a pinned `vendorHash`, `buildGoModule` downloads the modules itself, in
+a derivation of its own (`.#<pkg>.goModules`, the one `vendorHash` is the
+hash of). go asks `https://forgejo.../connerlab/termsafe?go-get=1` where the
+repository is, and git then clones it over HTTPS. go verifies the server with
+`SSL_CERT_FILE` and git with `GIT_SSL_CAINFO`, and nixpkgs points both at a
+bundle of public authorities, which does not hold the connerlabPKI root. nfu
+was the first program to solve this and is the worked example: its
+`flake.nix`, `nix/connerlab-root-ca.crt` and README section "The module from
+the Forgejo". The version stays pinned in one place, `go.mod`, and `go.sum`
+still checks what arrives.
 
-1. The hash. Set `vendorHash = lib.fakeHash`, build, and paste the `got:`
-   hash, as after any change to `go.sum`.
-2. That derivation now has to download termsafe from the Forgejo. Expect it
-   to fail as it stands: the bundle does not hold the connerlabPKI root, and
-   the public proxy does not have the module. Two halves of that have been
-   seen. git, given only that bundle the way `buildGoModule` gives it,
-   refuses the Forgejo's certificate ("unable to get local issuer
-   certificate"). And Go in Renovate's container, which has the public
-   authorities only, fails on another module of this Forgejo with "x509:
-   certificate signed by unknown authority". The Nix build itself has not
-   been run.
+### The recipe
 
-Three ways to deal with the second point, the first two already in use in
-these repositories:
+1. Commit the root certificate as `nix/connerlab-root-ca.crt`. Copy nfu's
+   file, comment included: it says what the certificate is, when it runs
+   out, its fingerprint and how to check a new copy. It is a public
+   certificate, not a secret.
+2. Add this to the `buildGoModule` call:
 
-- Commit `vendor/` and set `vendorHash = null`. This is what glip does.
-- Take termsafe as a flake input (`flake = false`) pinned to the tag, and in
-  `postPatch` replace the module with that input, so `go mod vendor` copies
-  it from the Nix store and never asks the Forgejo. Triate's `flake.nix` does
-  this for the vigil module and has the working form, including why the
-  replace goes through a relative symlink. The version is then pinned twice,
-  in `go.mod` and in `flake.lock`; move both together.
-- Give the vendor derivation what it lacks through `overrideModAttrs`: a
-  certificate bundle that includes the connerlabPKI root, and `GOPRIVATE`.
-  The builder must also be able to reach the Forgejo. Untried.
+   ```nix
+   overrideModAttrs = _: prev: {
+     preBuild = (prev.preBuild or "") + ''
+       caBase=$NIX_SSL_CERT_FILE
+       [ -r "$caBase" ] || caBase=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+       { cat "$caBase"; echo; cat ${./nix/connerlab-root-ca.crt}; } > "$TMPDIR/ca-bundle.crt"
+       export NIX_SSL_CERT_FILE="$TMPDIR/ca-bundle.crt"
+       export SSL_CERT_FILE="$NIX_SSL_CERT_FILE" GIT_SSL_CAINFO="$NIX_SSL_CERT_FILE"
+       export GOPRIVATE=forgejo.kube.internal.conn3r.xyz
+       echo "go modules: $caBase plus the connerlabPKI root; GOPRIVATE=$GOPRIVATE"
+     '';
+   };
+   ```
+
+   In the module derivation only, it takes the bundle that derivation was
+   going to use, appends the root, hands the result to go and to git, and
+   sets `GOPRIVATE`.
+3. Set `GOPRIVATE = "forgejo.kube.internal.conn3r.xyz";` in the dev shell.
+4. Refresh the hash: set `vendorHash = lib.fakeHash`, build, paste the
+   `got:` hash.
+
+### What is not obvious about it
+
+- **Set the variables in `preBuild`, not as attributes.** `NIX_SSL_CERT_FILE`
+  and `GOPROXY` are among that derivation's `impureEnvVars` (nixpkgs'
+  `lib.fetchers.proxyImpureEnvVars` and `buildGoModule` itself), and Nix
+  overwrites an attribute of such a name with the daemon's value.
+- **Never run the fetch without `GOPRIVATE`, not even to watch it fail.**
+  go asks proxy.golang.org about the module's path first, and
+  sum.golang.org after a direct download. That happened once during the
+  first port, which is the reason for this rule.
+- **A build that passes on your own machine proves nothing.** The daemon's
+  `NIX_SSL_CERT_FILE` is passed into the derivation, and a nix-darwin
+  machine's bundle may already hold the root. And a vendor tree that is in
+  the store under its hash is not fetched again. Force the fetch:
+
+  ```sh
+  nix build .#<pkg>.goModules --rebuild
+  ```
+
+  The `echo` in the block puts a line starting `go modules:` into its log,
+  naming the bundle that was used.
+- **The two failures look different.** go's request fails with `x509:
+  certificate signed by unknown authority`, on the `?go-get=1` URL. git's
+  fails with `unable to get local issuer certificate`. Both have been seen
+  with this Forgejo. On a NixOS host that trusts the root system-wide, the
+  nfu port saw only git fail.
+- On a Mac, go verifies the server with the keychain, not with the bundle
+  (seen with Go 1.26). So go's half can pass there for a reason that does
+  not hold on Linux.
+- The module's repository must be readable without credentials: the
+  derivation has none. termsafe's is.
+- The builder must reach the Forgejo the first time. After that the vendor
+  tree is in the store under its hash.
+- CI steps that run go outside a Nix build, `go vet` in a dev shell for
+  one, get the trust and `GOPRIVATE` from Woodpecker's global environment,
+  not from the flake.
+
+### Notes for each program
+
+- **npk**: the same block. Reference the certificate from `flake.nix` as
+  above, so that it does not matter whether the source fileset of the
+  package includes the `nix/` directory.
+- **Triate**: the same block for termsafe. Keep its flake input and
+  `replace` for the vigil module, which cannot be read without credentials.
+- **vigil**: the block goes into `nix/package.nix`, with the certificate
+  beside it. The Dockerfile's `go mod download` stage needs the same three
+  things: git, the root, and `GOPRIVATE`.
+- **glab**: it is packaged in nix-pkgs, so the block and the certificate go
+  there, and it takes two steps: glab's `go.mod` first, then nix-pkgs'
+  `vendorHash`.
+- **glip**: nothing. It commits `vendor/`.
 
 ## What termsafe does not do
 

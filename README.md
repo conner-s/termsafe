@@ -121,6 +121,7 @@ type Terminal struct {
 }
 func CheckTerminal(out *os.File) Terminal
 func (c Terminal) Fit(t Text) Text
+func (c Terminal) Probe(in, out *os.File, timeout time.Duration) Terminal
 
 // The test kit, for a program's own tests.
 type Sample struct{ Name, Text string }
@@ -142,7 +143,8 @@ repository.
 | A `Text` holds no ESC, no other C0 control, no DEL and no C1 control. `Clean` keeps newline and tab; `Line` turns them into spaces. With no ESC and no C1 in it, it holds no control sequence, and joining two cleaned texts cannot form one. | `TestClean`, `TestLine`, `TestInvariants_Random`, `TestSplitAcrossLines`, `FuzzClean` |
 | A `Text` holds only valid UTF-8. Each invalid byte becomes U+FFFD. | the same |
 | A `Text` holds no bidirectional control and no invisible format character, under either policy. `Drop` removes them, `Mark` replaces each with a marker such as `<U+202E>`. Three kinds stay because legitimate text needs them: a zero width joiner or non-joiner after a character it can act on, tag characters inside an emoji flag, and one variation selector directly after a character it can modify. | `TestFormatCharacters`, `TestNoFormatCharacterSurvives` (every code point), `TestBidiControlsAreTheTwelve` |
-| A variation selector that selects nothing is an invisible character like the others: one after a character it cannot modify, a second one in a row, a run. Every variation sequence Unicode 17.0 defines comes through untouched. | `TestStraySelectors`, `TestSelectorsOnTheirBases`, `TestSelectorsAgainstUnicodeData` (Unicode's own lists) |
+| A variation selector that selects nothing is an invisible character like the others: one after a character it cannot modify, a second one in a row, a run. Every variation sequence Unicode 17.0 defines comes through untouched. | `TestStraySelectors`, `TestSelectorsOnTheirBases`, `TestSelectorClasses` (the kinds of sequence); `TestSelectorsAgainstUnicodeData` (every sequence, when a maintainer supplies Unicode's files) |
+| `Terminal.Probe` writes nothing unless both files are a terminal in raw mode, never waits past its timeout, and leaves the screen as it was. | `TestAsk` and `TestProbeWith` (scripted terminals with a screen), `TestAsk_OverDescriptors` (real deadlines), `TestProbe_OnATerminal` (a pseudo terminal), `TestProbe_NotATerminal` |
 | A newline is the only line break in a `Text`, and a `Line` has none. A carriage return, U+2028 and U+2029 become a newline under `Clean` and a space under `Line`. | `TestLine_Whitespace`, `TestLineSeparators` |
 | `Text.ASCII()` holds printable ASCII, and newline and tab where the text had them, and no other byte. `Terminal.Fit` returns that form for every terminal but one found to be UTF-8, the zero `Terminal` included. | `TestText_ASCII`, `TestSamplesThroughASCII`, `TestTerminal_Fit`, and `checkInvariants` |
 | What `CheckTerminal` returns to show the user, `Reason` and `Evidence`, is one line of printable ASCII each, whatever the environment variables held. | `TestJudge_HostileEnvironment` |
@@ -242,11 +244,13 @@ character:
 
 Measured against Unicode 17.0's data, with the tables of Go 1.27:
 
-- Nothing Unicode defines is rejected. All 1,353 standardized variation
-  sequences and all 742 emoji variation sequences pass, and a test reads
-  them from Unicode's files on every run. All 39,501 sequences registered
-  in the Ideographic Variation Database pass; that was checked once, by
-  hand, and the file is not in the repository.
+- Nothing Unicode defines is rejected: all 1,353 standardized variation
+  sequences, all 742 emoji variation sequences and all 39,501 sequences
+  registered in the Ideographic Variation Database pass. Unicode's files are
+  not in this repository. `scripts/unicode-data.sh` fetches them and runs
+  the check over every sequence; a maintainer does that by hand. What runs
+  on every push is a table of the 41 kinds of sequence the two Unicode files
+  hold (selector, script, category), with up to three characters of each.
 - Much that Unicode does not define is accepted, because a class is wider
   than a list. Either presentation selector on 8,439 characters, where 371
   have both presentations. Any of 240 ideographic selectors on 101,996
@@ -338,7 +342,7 @@ in their UTF-8 encoding. U+00DB, a capital U with a circumflex, is C3 9B, and
 9B is CSI. No choice of characters is safe there. Only ASCII is.
 
 Up to v0.1.0 the package assumed UTF-8 and said so in a caveat. Now a
-program has three things to do.
+program has three things to do, and a fourth it may add.
 
 1. Call the check once, at start: `terminal := termsafe.CheckTerminal(os.Stdout)`,
    with the file it draws on.
@@ -351,6 +355,19 @@ program has three things to do.
 3. Tell the user when the verdict is not UTF-8, once, with
    `terminal.Reason`, and give them a way to overrule the verdict in both
    directions. The check can be wrong either way.
+4. If the program owns the terminal, it may ask the terminal itself:
+   `terminal = terminal.Probe(os.Stdin, os.Stdout, timeout)`. That is never
+   done unless the program calls it. [Asking the terminal](#asking-the-terminal)
+   has the conditions.
+
+One thing for the people who build the program, not for the program: set
+`GOPRIVATE=forgejo.kube.internal.conn3r.xyz` on developer machines and in dev
+shells. The module lives on a Forgejo the public Go services cannot see.
+Without the variable, any `go` command that touches the network (`go get`,
+`go mod tidy`, a first build) sends the module's path to proxy.golang.org
+before it tries the Forgejo, and to sum.golang.org after a direct download,
+where the check then fails. [PORTING.md](PORTING.md) has the rest, for
+vendoring and for Nix.
 
 Run `Text.MixedScripts` before the ASCII form, which has no letters of other
 scripts left in it. `Mixed.String()` draws the word as it stands, so on such
@@ -371,14 +388,8 @@ were missed.
   `C` and `POSIX` locales, which are ASCII. A locale with no codeset, such
   as `de_DE`, gives `EncodingUnknown`: its default is Latin-1 on one system
   and UTF-8 on another. No locale at all gives `EncodingUnknown`.
-- On Windows, whether the file is a console. Go's `os` package writes to a
-  console with `WriteConsoleW`, in UTF-16, so the characters arrive whatever
-  the console's output code page is. The verdict is `EncodingUTF8` and the
-  code page goes into the evidence. This is true of writes through an
-  `*os.File`. Bytes that reach the console another way, a child process's
-  output for one, are decoded by the code page, and only 65001 is UTF-8.
-  When the file is not a console (a pipe, a file, or mintty, which Windows
-  presents as a pipe) the locale variables decide.
+- On Windows, what the file is. The table under
+  [Windows](#windows) has every case.
 - Whether the file is a terminal at all, `SSH_CONNECTION` and `SSH_TTY`,
   `TMUX` and `STY`. These go into `Evidence` and do not change the verdict.
 
@@ -401,26 +412,107 @@ terminal they are about. Values from the environment are cleaned and cut to
   cron jobs and `sudo` reset the locale. They get the ASCII form, which is
   safe and ugly, and the reason for the override in step 3.
 
+### Windows
+
+On Windows the verdict follows from how Go's `os` package writes to the
+kind of handle the program was given. This is from the source of Go 1.26.10
+and Go 1.27.3, which agree:
+
+- `os.newFile` (`os/file_windows.go`) calls a handle a console when
+  `syscall.GetConsoleMode` succeeds on it.
+- For a console, `(*FD).Write` (`internal/poll/fd_windows.go`) calls
+  `(*FD).writeConsole`, which decodes the bytes as UTF-8 and passes the
+  characters to `syscall.WriteConsole`, which is `WriteConsoleW`, as UTF-16.
+  No byte reaches the console, so no code page decodes one.
+- For a pipe or a file, the same `Write` calls `syscall.WriteFile` with the
+  bytes as they are.
+
+| The output is | What Go writes | What the terminal receives | Verdict |
+| --- | --- | --- | --- |
+| A console with virtual terminal processing: Windows Terminal, a ConPTY under an editor's terminal, the classic console once a TUI framework has switched the mode on | UTF-16 characters, `WriteConsoleW` | the characters; it obeys escape sequences among them | `EncodingUTF8` |
+| A console without virtual terminal processing | the same | the characters; it draws escape sequences as text | `EncodingUTF8` |
+| A console under `sshd` (Win32-OpenSSH gives the shell a ConPTY) | the same | the console receives the characters and sends UTF-8 on to a terminal on another machine | `EncodingUTF8`, with the ssh session in the evidence |
+| An MSYS or Cygwin terminal: mintty, Git Bash, the Cygwin terminal. Windows presents it as a pipe named like `msys-...-pty0-to-master` | the bytes, `WriteFile` | the bytes, decoded in the terminal's own charset, which MSYS and Cygwin export as the locale | by `LC_ALL`, `LC_CTYPE`, `LANG`, as on Unix |
+| Any other pipe | the bytes | whatever the reader makes of them | by the locale variables; usually none is set, so `EncodingUnknown` |
+| A file, or `NUL` | the bytes | nothing draws them yet | the same |
+
+The code page is in the evidence for the console rows and decides nothing
+there: 437, 932 and 65001 give the same verdict for the same reason. It does
+decide for bytes that reach a console another way, a child process's output
+for one, and for those only 65001 is UTF-8. That is outside what termsafe can
+see.
+
+The verdict for a console is a statement about `*os.File`. A program that
+writes to the console handle some other way is not covered by it.
+
+The whole table is one function, `judge`, which is given the facts and makes
+no system call. It is tested on every platform, with the facts for each row
+written out. The part that gathers the facts on Windows, four system calls in
+`terminal_windows.go`, has never run: see
+[What was tested](#what-was-tested-and-what-was-not).
+
 ### Asking the terminal
 
-The one way to find out is to ask: write a carriage return, a character of
-two UTF-8 bytes that are both printable in the 8-bit sets (U+00E9 is C3 A9),
-then the cursor position query `CSI 6 n`, and read the reply. Column 2 means
-the terminal drew one character and decodes UTF-8. Column 3 means it drew
-two, or one double-width one, and does not. No reply within a moment means
-it cannot be told. Then erase the line.
+The environment can be wrong. The one way to find out is to ask the
+terminal, and `Terminal.Probe` does, for a program that owns the terminal and
+calls it:
 
-termsafe does not do this, on purpose. The reply arrives on the terminal's
-input, which belongs to the program or its TUI framework, and two readers on
-one input lose bytes to each other. Reading it also needs raw mode, which the
-standard library reaches only through a different `ioctl` on every system.
-And it writes to the terminal before the program has decided how to draw. A
-program that owns the terminal through a framework can ask through the
-framework: bubbletea v2 has `tea.Raw` to write the bytes and
-`tea.RequestCursorPosition` for the query. It must never be the default, and
-it must give up at once when the output is not a terminal. If that turns out
-to be wanted in more than one program, the judging half (the bytes to write
-and what a column means) could move here.
+```go
+terminal := termsafe.CheckTerminal(os.Stdout)
+
+// Before a TUI starts, the terminal is in the mode the shell left it in.
+// Switch echo and line editing off for the moment of the question and put
+// the mode back. The package for that is one the program has already,
+// through its TUI framework: github.com/charmbracelet/x/term under
+// bubbletea, golang.org/x/term elsewhere.
+if state, err := term.MakeRaw(os.Stdin.Fd()); err == nil {
+	terminal = terminal.Probe(os.Stdin, os.Stdout, 200*time.Millisecond)
+	_ = term.Restore(os.Stdin.Fd(), state)
+}
+
+p := tea.NewProgram(newModel(terminal)) // then the program loop, as before
+```
+
+What it does: it writes the cursor position query `CSI 6 n` and reads the
+answer. Then it writes one character of two UTF-8 bytes, U+00E4 (C3 A4), and
+the query again. A terminal that decodes UTF-8 has moved one cell. An 8-bit
+terminal has drawn two characters and moved two; a terminal in an East Asian
+double-byte set has drawn one wide character and moved two. Then it blanks
+what it drew and puts the cursor back. U+00E4 was chosen because both of its
+bytes are printable in the 8-bit sets, neither is a C1 control, and Unicode
+gives it a fixed narrow width, which U+00E9 does not have.
+
+What the answer changes: it outranks the environment. `Encoding` becomes
+what the terminal showed, `Reason` says so and names what the environment had
+said, and `Evidence` keeps the environment's lines and gains one. With no
+answer, `Encoding` and `Reason` stay as they were and the new line of
+evidence says why.
+
+What it will not do:
+
+- It opens nothing and sets no terminal mode. The caller hands in the input
+  and the output it already holds.
+- It asks only when both are a terminal. Given a pipe, a file, the null
+  device or nil it writes nothing and reads nothing.
+- It asks only when the terminal is in raw mode, which it reads and does not
+  set. In any other mode the terminal driver would draw the answer on the
+  screen and keep it from the program until the next newline. So a program
+  that forgets the `MakeRaw` above gets "cannot tell", not a mess.
+- It never waits past the timeout. It waits with `select` and reads only
+  what is there, so no read is left open for a later keypress to fall into.
+- It draws nothing before the terminal has answered once, and it asks
+  nothing when the cursor is within two cells of the right edge.
+
+What a caller should still know. A key the user presses during the probe is
+read and dropped. An answer that arrives after the timeout is still on its
+way, and the program reads it later as input; a TUI framework takes it for
+the cursor position report it is. The cell or two under the cursor are blank
+afterwards, whatever they held. It is implemented for Linux on amd64 and
+arm64 and for macOS; elsewhere it answers "cannot tell" without asking. On
+Windows there is nothing to ask in the case that matters, the console.
+
+Inside a running TUI the framework owns the input, and `Probe` must not be
+called there. Ask before the loop starts, as above.
 
 ## Unicode versions
 
@@ -466,8 +558,14 @@ request:
   and broken UTF-8; the Trojan Source shapes; invisible characters;
   variation selectors that select nothing; both policies; the report for
   each.
-- Every standardized and every emoji variation sequence of Unicode 17.0,
-  read from Unicode's own files in `testdata/unicode`: none is touched.
+- A table of the 41 kinds of variation sequence Unicode 17.0 defines, with
+  up to three characters of each kind: none is touched. An ordinary run does
+  not prove that every defined sequence passes. Unicode's lists are not in
+  the repository, so that it holds no third-party data. A sequence of a
+  kind that is not in the table, in a future Unicode version, would go
+  unnoticed until someone runs `scripts/unicode-data.sh`, which fetches the
+  lists and checks every sequence, the 39,501 registered ideographic ones
+  too. It was last run for v0.2.0, under both Go releases.
 - The tests run on Go 1.27 and on Go 1.26, whose Unicode tables differ.
 - Every code point from U+0080 up, placed between two ASCII letters: none
   that is a bidirectional control or an invisible character survives.
@@ -485,7 +583,16 @@ request:
   printable ASCII and nothing else. The random runs and the fuzz target
   check the same of every input.
 - The terminal check over a table of locale settings, and with every sample
-  as the value of a locale variable.
+  as the value of a locale variable. The table for Windows is part of it
+  and runs on Linux and macOS: it is given the facts a Windows machine
+  would report.
+- The probe against scripted terminals that keep a screen: one that decodes
+  UTF-8, an 8-bit one, a double-byte one, one that never answers, one that
+  answers with garbage, one that answers after the deadline, one that
+  answers once. Each run ends with the screen as it was. The same over real
+  pipes with real deadlines, and over a pseudo terminal, where the kernel's
+  terminal driver sits between the probe and the scripted terminal: in raw
+  mode it asks, in the mode a shell leaves it asks nothing.
 - Statement coverage of the package is 100% and CI fails below that.
 
 Tested in the programs that use it, not here:
@@ -507,15 +614,33 @@ Not tested:
   right-to-left text termsafe leaves alone.
 - Speed, beyond the one test that clean ASCII allocates nothing. Cleaning is
   one pass over the string.
-- Windows. CI runs the tests on Linux and they were run on macOS. For
-  Windows there is only `go vet` with `GOOS=windows`. The one file that is
-  specific to Windows, the two system calls that ask whether the output is a
-  console and for its code page, has never run. That Go writes to a console
-  in UTF-16 was read in the source of Go 1.26 and 1.27, not watched on a
-  Windows machine.
+- **Windows. Nothing of this package has run on Windows, or on anything
+  that stands in for it.** CI is Linux and development is on macOS. The
+  Windows build is compiled and passes `go vet`, on every push, and that is
+  all. Read no more into it.
+  - Running the Windows build under Wine was tried and could not be done:
+    nixpkgs has no Wine for an Apple Silicon Mac (`wine64` is built for
+    x86_64-linux, x86_64-darwin and aarch64-linux), and its x86_64-darwin
+    build cannot start here, because this Mac has no Rosetta. Whether it
+    would work in the Linux CI is not known; nothing here can run a Linux
+    container to find out. It would also show less than it seems to: under
+    Wine in CI the output is a pipe, so the console rows would still not
+    run.
+  - What that leaves untested is small and named: the four system calls in
+    `terminal_windows.go` that gather the facts, and the claim, read in
+    Go's source, that an `*os.File` writes to a console in UTF-16. The
+    decision made from the facts is tested everywhere.
+  - `terminal_windows_test.go` holds the tests that would turn both into
+    evidence. `TestWindowsConsoleReceivesCharacters` sets the console to
+    code page 437, writes three characters through an `*os.File` and reads
+    the cells back from the screen buffer. They have never run either. On a
+    Windows machine, from a console window: `go test -run Windows -v .`
 - The terminal check against real terminals in other encodings. Its table
   is what locales say, not what any terminal did.
-- The method under "Asking the terminal". It is described, not implemented.
+- The probe against a real terminal emulator. Its terminals are scripted,
+  and the pseudo terminal test has run on macOS only: on Linux it runs for
+  the first time in CI. The probe's Linux constants for the terminal mode
+  are from the kernel's headers for amd64 and arm64, not from a run.
 - Nobody outside the project has reviewed it. The owner reviewed it in
   connerlab/glip#12, where it was written.
 

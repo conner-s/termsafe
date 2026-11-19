@@ -7,7 +7,7 @@ program that imports it. `README.md` says what a v0 version number promises.
 
 Nothing yet.
 
-## v0.2.0 - not tagged yet
+## v0.2.0 - 2026-11-19
 
 Two things change what cleaning does, and the package stops assuming a UTF-8
 terminal. Everything v0.1.0 exported is still there with the same signature.
@@ -49,9 +49,19 @@ terminal. Everything v0.1.0 exported is still there with the same signature.
 ### Added
 
 - `CheckTerminal`, `Terminal` and `Encoding` (`EncodingUnknown`,
-  `EncodingUTF8`, `EncodingNotUTF8`): what the locale variables and, on
-  Windows, the console say about whether the terminal decodes UTF-8, with
-  the reason and the evidence as text a program can show.
+  `EncodingUTF8`, `EncodingNotUTF8`): what the environment says about
+  whether the terminal decodes UTF-8, with the reason and the evidence as
+  text a program can show. On Unix it reads the locale variables. On
+  Windows it goes by the kind of handle: a console is UTF-8 because Go
+  writes to it in UTF-16, an MSYS or Cygwin terminal goes by the locale its
+  shell exports, a pipe or a file is not known. The Windows part is compiled
+  and vetted and has never run.
+- `Terminal.Probe`: asks the terminal itself, for a program that owns it and
+  calls this. It writes a cursor position query, one two-byte character and
+  a second query through the input and output the caller hands in, within a
+  timeout, and blanks what it drew. Its answer outranks the environment's.
+  It asks nothing unless both files are a terminal in raw mode. Linux on
+  amd64 and arm64, and macOS; elsewhere it answers "cannot tell".
 - `Text.ASCII`: the text with every character outside ASCII shown by its
   code point, for a terminal that cannot be taken as UTF-8. `Terminal.Fit`
   chooses between a text and its ASCII form.
@@ -63,8 +73,10 @@ terminal. Everything v0.1.0 exported is still there with the same signature.
   add; `PORTING.md` has the steps and the third test.
 - The Unicode version the tests ran under is printed by
   `TestUnicodeVersion`, and CI runs the tests on Go 1.26 as well as 1.27.
-- `testdata/unicode` holds two data files of Unicode 17.0, under the Unicode
-  License V3, for the test that holds the selector rule to Unicode's lists.
+- `scripts/unicode-data.sh` fetches Unicode's lists of variation sequences
+  and runs the test that holds the selector rule to every one of them. The
+  lists are not in the repository; the ordinary tests check a table of the
+  41 kinds of sequence instead.
 
 ### Moved
 
