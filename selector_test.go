@@ -3,6 +3,7 @@ package termsafe
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -235,6 +236,113 @@ func TestSelectorAfterSomethingRemoved(t *testing.T) {
 	checkInvariants(t, in)
 }
 
+// selectorClasses is every kind of variation sequence Unicode 17.0 defines,
+// in StandardizedVariants.txt and emoji-variation-sequences.txt: the
+// selector, the script and the general category of the characters it is
+// defined on, how many such characters there are, and up to three of them
+// (the first, the middle and the last by code point). It was derived from the
+// two files for this test; the files themselves are not in the repository.
+// The counts add up to the 2,095 sequences of the two files.
+//
+// It is what the rule in takesSelector was written against. A new Unicode
+// version that defines a sequence of a kind not listed here would not be
+// noticed by this table: scripts/unicode-data.sh fetches the files and runs
+// the full check.
+var selectorClasses = []struct {
+	selector rune
+	script   string // "Han" stands for the unified ideographs
+	category string
+	count    int
+	examples []rune
+}{
+	{0x180B, "Mongolian", "Lo", 40, []rune{0x1820, 0x1847, 0x188A}},
+	{0x180C, "Mongolian", "Lo", 14, []rune{0x1820, 0x1836, 0x1887}},
+	{0x180D, "Mongolian", "Lo", 6, []rune{0x1828, 0x1873, 0x1887}},
+	{0xFE00, "Common", "Lu", 26, []rune{0x210B, 0x1D4A6, 0x1D4B5}},
+	{0xFE00, "Common", "Nd", 2, []rune{0x0030, 0xFF10}},
+	{0xFE00, "Common", "Pf", 2, []rune{0x2019, 0x201D}},
+	{0xFE00, "Common", "Pi", 2, []rune{0x2018, 0x201C}},
+	{0xFE00, "Common", "Po", 8, []rune{0x3001, 0xFF0E, 0xFF1F}},
+	{0xFE00, "Common", "Sm", 25, []rune{0x2205, 0x2297, 0x2ACC}},
+	{0xFE00, "Egyptian_Hieroglyphs", "Lo", 50, []rune{0x13091, 0x1333C, 0x13F72}},
+	{0xFE00, "Han", "Lo", 902, []rune{0x349E, 0x7235, 0x2A600}},
+	{0xFE00, "Manichaean", "Lo", 5, []rune{0x10AC5, 0x10AD6, 0x10AE1}},
+	{0xFE00, "Myanmar", "Lo", 26, []rune{0x1000, 0x107A, 0xAA7A}},
+	{0xFE00, "Myanmar", "Mc", 1, []rune{0x1031}},
+	{0xFE00, "Phags_Pa", "Lo", 6, []rune{0xA856, 0xA85F, 0xA868}},
+	{0xFE01, "Common", "Lu", 26, []rune{0x210B, 0x1D4A6, 0x1D4B5}},
+	{0xFE01, "Common", "Pf", 2, []rune{0x2019, 0x201D}},
+	{0xFE01, "Common", "Pi", 2, []rune{0x2018, 0x201C}},
+	{0xFE01, "Common", "Po", 8, []rune{0x3001, 0xFF0E, 0xFF1F}},
+	{0xFE01, "Egyptian_Hieroglyphs", "Lo", 25, []rune{0x13093, 0x132A4, 0x14274}},
+	{0xFE01, "Han", "Lo", 88, []rune{0x3B9D, 0x716E, 0x25AA7}},
+	{0xFE02, "Common", "Pf", 2, []rune{0x2019, 0x201D}},
+	{0xFE02, "Common", "Pi", 2, []rune{0x2018, 0x201C}},
+	{0xFE02, "Egyptian_Hieroglyphs", "Lo", 37, []rune{0x13117, 0x13313, 0x14274}},
+	{0xFE02, "Han", "Lo", 12, []rune{0x537F, 0x6BBA, 0x9F9C}},
+	{0xFE03, "Egyptian_Hieroglyphs", "Lo", 16, []rune{0x13012, 0x1319D, 0x13419}},
+	{0xFE04, "Egyptian_Hieroglyphs", "Lo", 2, []rune{0x13139, 0x1340D}},
+	{0xFE05, "Egyptian_Hieroglyphs", "Lo", 2, []rune{0x13139, 0x14274}},
+	{0xFE06, "Egyptian_Hieroglyphs", "Lo", 14, []rune{0x1312F, 0x132E9, 0x14274}},
+	{0xFE0E, "Common", "Ll", 1, []rune{0x2139}},
+	{0xFE0E, "Common", "Nd", 10, []rune{0x0030, 0x0035, 0x0039}},
+	{0xFE0E, "Common", "Pd", 1, []rune{0x3030}},
+	{0xFE0E, "Common", "Po", 5, []rune{0x0023, 0x203C, 0x303D}},
+	{0xFE0E, "Common", "Sm", 7, []rune{0x2194, 0x25FD, 0x2935}},
+	{0xFE0E, "Common", "So", 347, []rune{0x00A9, 0x1F324, 0x1F6F3}},
+	{0xFE0F, "Common", "Ll", 1, []rune{0x2139}},
+	{0xFE0F, "Common", "Nd", 10, []rune{0x0030, 0x0035, 0x0039}},
+	{0xFE0F, "Common", "Pd", 1, []rune{0x3030}},
+	{0xFE0F, "Common", "Po", 5, []rune{0x0023, 0x203C, 0x303D}},
+	{0xFE0F, "Common", "Sm", 7, []rune{0x2194, 0x25FD, 0x2935}},
+	{0xFE0F, "Common", "So", 347, []rune{0x00A9, 0x1F324, 0x1F6F3}},
+}
+
+// TestSelectorClasses: one to three characters of each kind of sequence
+// Unicode defines take their selector and come through untouched and
+// unreported. A character this Go release does not know yet is left out, as
+// in TestSelectorsAgainstUnicodeData; every kind must have one that is known.
+func TestSelectorClasses(t *testing.T) {
+	total := 0
+	for _, class := range selectorClasses {
+		total += class.count
+		known := 0
+		for _, base := range class.examples {
+			if !unicode.In(base, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S) {
+				continue
+			}
+			known++
+			// The table says what kind of character this is; the rule
+			// goes by that, so hold the table to this release's tables.
+			if !unicode.Is(unicode.Categories[class.category], base) {
+				t.Errorf("%U is not of category %s", base, class.category)
+			}
+			if class.script == "Han" {
+				if !unicode.Is(unicode.Unified_Ideograph, base) {
+					t.Errorf("%U is not a unified ideograph", base)
+				}
+			} else if !unicode.Is(unicode.Scripts[class.script], base) {
+				t.Errorf("%U is not of the script %s", base, class.script)
+			}
+			if !takesSelector(base, class.selector) {
+				t.Errorf("%U %U (%s %s, one of %d): the rule does not keep it", base, class.selector, class.script, class.category, class.count)
+			}
+			in := "a " + string(base) + string(class.selector) + " b"
+			for name, policy := range map[string]Policy{"Drop": Drop, "Mark": Mark} {
+				if text, rep := policy.LineReport(in); text.String() != in || rep.Changed() {
+					t.Errorf("%U %U: %s gives %+q and reports %+v", base, class.selector, name, text.String(), rep)
+				}
+			}
+		}
+		if known == 0 {
+			t.Errorf("%U on %s %s: Unicode %s knows none of the examples %U", class.selector, class.script, class.category, unicode.Version, class.examples)
+		}
+	}
+	if total != 2095 {
+		t.Errorf("the classes count %d sequences, want the 2,095 of Unicode 17.0", total)
+	}
+}
+
 // variationSequences reads the base and selector of every sequence in one of
 // Unicode's data files: lines of "base selector ; description".
 func variationSequences(t *testing.T, path string) [][2]rune {
@@ -266,25 +374,49 @@ func variationSequences(t *testing.T, path string) [][2]rune {
 	return seqs
 }
 
-// TestSelectorsAgainstUnicodeData holds the rule to Unicode's own lists: every
-// standardized variation sequence and every emoji variation sequence of
-// Unicode 17.0 comes through untouched and unreported.
+// TestSelectorsAgainstUnicodeData holds the rule to Unicode's own lists:
+// every standardized variation sequence, every emoji variation sequence and,
+// when the file is there, every registered ideographic variation sequence
+// comes through untouched and unreported.
+//
+// The lists are Unicode's data files, which are not kept in this repository.
+// The test runs only when TERMSAFE_UNICODE_DATA names a directory that holds
+// StandardizedVariants.txt and emoji-variation-sequences.txt, and
+// IVD_Sequences.txt if wanted; scripts/unicode-data.sh fetches them and runs
+// it. Without the variable it is skipped, and TestSelectorClasses is what
+// stands in for it.
 //
 // A sequence whose base this Go release does not know yet is left out and
 // counted: built with Go 1.26, whose tables are Unicode 15.0, the package
 // removes a selector after a character that Unicode added later. With tables
-// of 17.0 or newer nothing may be left out.
+// as new as the files nothing may be left out; TERMSAFE_UNICODE_VERSION says
+// how new the files are, 17.0.0 when it is not set.
 func TestSelectorsAgainstUnicodeData(t *testing.T) {
+	dir := os.Getenv("TERMSAFE_UNICODE_DATA")
+	if dir == "" {
+		t.Skip("TERMSAFE_UNICODE_DATA is not set: Unicode's lists of variation sequences are not in the repository (scripts/unicode-data.sh fetches them)")
+	}
+	dataVersion := os.Getenv("TERMSAFE_UNICODE_VERSION")
+	if dataVersion == "" {
+		dataVersion = "17.0.0"
+	}
 	for _, file := range []struct {
-		path string
-		min  int // the file has at least this many sequences
+		name     string
+		min      int // the file has at least this many sequences
+		optional bool
 	}{
-		{"testdata/unicode/StandardizedVariants.txt", 1300},
-		{"testdata/unicode/emoji-variation-sequences.txt", 700},
+		{"StandardizedVariants.txt", 1200, false},
+		{"emoji-variation-sequences.txt", 700, false},
+		{"IVD_Sequences.txt", 39000, true},
 	} {
-		seqs := variationSequences(t, file.path)
+		path := filepath.Join(dir, file.name)
+		if _, err := os.Stat(path); err != nil && file.optional {
+			t.Logf("%s is not there and was not checked", file.name)
+			continue
+		}
+		seqs := variationSequences(t, path)
 		if len(seqs) < file.min {
-			t.Fatalf("%s: read %d sequences, want at least %d", file.path, len(seqs), file.min)
+			t.Fatalf("%s: read %d sequences, want at least %d", path, len(seqs), file.min)
 		}
 		unknown := 0
 		for _, seq := range seqs {
@@ -294,19 +426,19 @@ func TestSelectorsAgainstUnicodeData(t *testing.T) {
 				continue
 			}
 			if !unicode.Is(unicode.Variation_Selector, sel) {
-				t.Errorf("%s: %U %U: the second is not a variation selector", file.path, base, sel)
+				t.Errorf("%s: %U %U: the second is not a variation selector", file.name, base, sel)
 				continue
 			}
 			in := "a " + string(base) + string(sel) + " b"
 			for name, policy := range map[string]Policy{"Drop": Drop, "Mark": Mark} {
 				if text, rep := policy.LineReport(in); text.String() != in || rep.Changed() {
-					t.Errorf("%s: %U %U is a sequence Unicode defines, but %s gives %+q and reports %+v", file.path, base, sel, name, text.String(), rep)
+					t.Errorf("%s: %U %U is a sequence Unicode defines, but %s gives %+q and reports %+v", file.name, base, sel, name, text.String(), rep)
 				}
 			}
 		}
-		t.Logf("%s: %d sequences, %d with a base unknown to Unicode %s", file.path, len(seqs), unknown, unicode.Version)
-		if unknown > 0 && !olderThan(unicode.Version, "17.0.0") {
-			t.Errorf("%s: %d bases are unknown to Unicode %s, which should know all of 17.0", file.path, unknown, unicode.Version)
+		t.Logf("%s: %d sequences, %d with a base unknown to Unicode %s", file.name, len(seqs), unknown, unicode.Version)
+		if unknown > 0 && !olderThan(unicode.Version, dataVersion) && !file.optional {
+			t.Errorf("%s: %d bases are unknown to Unicode %s, which should know all of %s", file.name, unknown, unicode.Version, dataVersion)
 		}
 	}
 }
